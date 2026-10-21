@@ -1,0 +1,29 @@
+# Smoke test del pipeline de CI: la imagen del commit con un PostgreSQL efímero.
+# Sin puertos publicados ni volúmenes con nombre; se borra con `down -v` (ver Jenkinsfile).
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ticket
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+      POSTGRES_DB: ticket_api
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ticket -d ticket_api']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  ticket-api:
+    image: ticket-api:${TICKET_API_TAG:?Define TICKET_API_TAG}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://ticket:${POSTGRES_PASSWORD}@postgres:5432/ticket_api
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET}
+      # URL válida pero inexistente: el smoke test no hace pagos
+      PAYMENT_GATEWAY_URL: http://payment-gateway.invalid:8080
+      PAYMENT_GATEWAY_API_KEY: ${PAYMENT_GATEWAY_API_KEY:?Define PAYMENT_GATEWAY_API_KEY}

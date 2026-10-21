@@ -8,5 +8,10 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 120_000,
+    // En CI (Jenkins) también se genera el reporte JUnit; en local la salida no cambia
+    ...(process.env.CI && {
+      reporters: ['default', 'junit'],
+      outputFile: { junit: 'reports/junit.xml' },
+    }),
   },
 });

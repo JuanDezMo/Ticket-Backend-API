@@ -57,6 +57,10 @@ ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente
 
 La suite automática (`pnpm test`) no necesita la pasarela. Para validar la integración contra el microservicio real hay un script y su documentación: [`docs/test-suite.md`](docs/test-suite.md) (cómo levantar primero la pasarela, luego `ticket-api`, y ejecutar `./scripts/verify-gateway.sh`).
 
+## CI/CD con Jenkins y Docker
+
+Un Jenkins local (`ci/jenkins/`) corre el `Jenkinsfile` en cada commit de `main`: lint, arch, build, pruebas con PostgreSQL real, imagen `ticket-api:<commit>`, smoke test y despliegue local con aprobación manual. Se levanta con `docker compose -f ci/jenkins/docker-compose.yml up -d --build` y queda en <http://127.0.0.1:8081>. Detalle en [`docs/ci-cd.md`](docs/ci-cd.md).
+
 ## Scripts
 
 | Script | Descripción |

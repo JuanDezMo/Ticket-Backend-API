@@ -17,6 +17,8 @@ services:
 
   ticket-api:
     build: .
+    # Con --build se compila y etiqueta "local"; el despliegue de Jenkins usa --no-build con la etiqueta del commit
+    image: ticket-api:${TICKET_API_TAG:-local}
     depends_on:
       postgres:
         condition: service_healthy

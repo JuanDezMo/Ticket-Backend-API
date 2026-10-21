@@ -1,0 +1,30 @@
+# Jenkins local para el CI/CD de ticket-api. Uso: ver docs/ci-cd.md
+name: ticket-ci-jenkins
+
+services:
+  jenkins:
+    build: .
+    environment:
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:?Define JENKINS_ADMIN_PASSWORD in ci/jenkins/.env}
+      CASC_JENKINS_CONFIG: /var/jenkins_config/casc.yaml
+      JAVA_OPTS: >-
+        -Djenkins.install.runSetupWizard=false
+        -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true
+    # Acceso al socket de Docker sin ser root (GID del grupo docker del host)
+    group_add:
+      - '${DOCKER_GID:-999}'
+    # Solo accesible desde esta máquina
+    ports:
+      - '127.0.0.1:8081:8080'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./casc.yaml:/var/jenkins_config/casc.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../..:/repos/ticket_backend_api:ro
+      - ../../.env:/run/secrets/ticket-api.env:ro
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:

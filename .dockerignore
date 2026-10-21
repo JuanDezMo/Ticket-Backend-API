@@ -5,4 +5,8 @@ dist
 docs
 openspec
 .claude
+ci
+reports
+Jenkinsfile
+docker-compose*.yml
 tests
