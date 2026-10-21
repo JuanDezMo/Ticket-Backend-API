@@ -13,4 +13,7 @@ export const createReservationSchema = z
   })
   .strict();
 
+export const reservationIdParamsSchema = z.object({ id: z.uuid() });
+
 export type CreateReservationBody = z.infer<typeof createReservationSchema>;
+export type ReservationIdParams = z.infer<typeof reservationIdParamsSchema>;

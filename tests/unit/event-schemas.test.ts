@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEventSchema,
   eventFiltersSchema,
+  eventIdParamsSchema,
   listEventsQuerySchema,
 } from '../../src/modules/events/event.schemas.js';
 
@@ -104,5 +105,16 @@ describe('listEventsQuerySchema', () => {
         startTo: '2026-01-01T00:00:00Z',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('eventIdParamsSchema', () => {
+  it('accepts a UUID', () => {
+    const id = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+    expect(eventIdParamsSchema.parse({ id })).toEqual({ id });
+  });
+
+  it('rejects an id that is not a UUID', () => {
+    expect(eventIdParamsSchema.safeParse({ id: 'abc' }).success).toBe(false);
   });
 });

@@ -62,5 +62,8 @@ export const listEventsQuerySchema = paginationSchema
     message: 'must not be after startTo',
   });
 
+export const eventIdParamsSchema = z.object({ id: z.uuid() });
+
 export type CreateEventBody = z.infer<ReturnType<typeof createEventSchema>>;
 export type ListEventsQuery = z.infer<typeof listEventsQuerySchema>;
+export type EventIdParams = z.infer<typeof eventIdParamsSchema>;

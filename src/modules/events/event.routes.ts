@@ -3,7 +3,7 @@ import { requireRole } from '../../shared/middleware/require-role.js';
 import { validate } from '../../shared/middleware/validate.js';
 import { ROLES } from '../../shared/security/roles.js';
 import type { EventController } from './event.controller.js';
-import { createEventSchema, listEventsQuerySchema } from './event.schemas.js';
+import { createEventSchema, eventIdParamsSchema, listEventsQuerySchema } from './event.schemas.js';
 
 export function createEventRoutes(
   controller: EventController,
@@ -12,6 +12,8 @@ export function createEventRoutes(
   const router = Router();
   // Público: no exige autenticación
   router.get('/', validate(listEventsQuerySchema, 'query'), controller.list);
+  // Público: no exige autenticación
+  router.get('/:id', validate(eventIdParamsSchema, 'params'), controller.getById);
   router.post(
     '/',
     authenticate,

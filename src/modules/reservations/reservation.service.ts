@@ -6,7 +6,11 @@ import type { EventService } from '../events/event.service.js';
 import { parseSeatLabel } from '../seats/seat-label.js';
 import type { SeatService } from '../seats/seat.service.js';
 import type { ReservationRepository } from './reservation.repository.js';
-import type { Reservation, PublicReservation } from './reservation.types.js';
+import {
+  RESERVATION_STATUSES,
+  type Reservation,
+  type PublicReservation,
+} from './reservation.types.js';
 
 export function toPublicReservation(
   reservation: Reservation,
@@ -66,6 +70,26 @@ export class ReservationService {
       }
     });
     return toPublicReservation(reservation, `${seat.row}${seat.number}`);
+  }
+
+  async getForOwner(userId: string, id: string): Promise<PublicReservation> {
+    const found = await this.reservations.findForPurchase(id);
+    if (!found) throw new AppError('RESERVATION_NOT_FOUND');
+    const { reservation, expired } = found;
+    // El dueño se valida antes de leer cualquier otro dato de la reserva
+    if (reservation.userId !== userId) throw new AppError('FORBIDDEN');
+
+    const seat = await this.seats.findById(reservation.seatId);
+    if (!seat) throw new AppError('INTERNAL_ERROR');
+
+    // Estado efectivo (RN-RES-8): una ACTIVE vencida según la hora de la BD se informa como
+    // EXPIRED, con el mismo criterio de la compra (RN-RES-7). No se escribe: la liberación
+    // es trabajo del job y del listado/reserva (RN-RES-6), y un GET no debe tener efectos.
+    const status =
+      reservation.status === RESERVATION_STATUSES.ACTIVE && expired
+        ? RESERVATION_STATUSES.EXPIRED
+        : reservation.status;
+    return toPublicReservation({ ...reservation, status }, `${seat.row}${seat.number}`);
   }
 
   findForPurchase(id: string) {

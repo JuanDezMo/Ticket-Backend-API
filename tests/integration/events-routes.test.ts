@@ -195,4 +195,44 @@ describe('events routes', () => {
       expect(res.body.code).toBe('VALIDATION_ERROR');
     });
   });
+
+  describe('GET /events/:id', () => {
+    it('is public and returns the same body as the listing', async () => {
+      const { id } = await insertEvent(ctx.db, { name: 'Detail' });
+      const res = await request(ctx.app).get(`/events/${id}`);
+      expect(res.status).toBe(200);
+      const listed = (await request(ctx.app).get('/events')).body.data.find(
+        (e: { id: string }) => e.id === id,
+      );
+      expect(res.body).toEqual(listed);
+    });
+
+    it('returns a cancelled event with its status', async () => {
+      const { id } = await insertEvent(ctx.db, { status: 'CANCELLED' });
+      const res = await request(ctx.app).get(`/events/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('CANCELLED');
+    });
+
+    it('returns 404 EVENT_NOT_FOUND for an unknown id', async () => {
+      const res = await request(ctx.app).get(`/events/${crypto.randomUUID()}`);
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ code: 'EVENT_NOT_FOUND', message: expect.any(String) });
+    });
+
+    it('returns 400 VALIDATION_ERROR when the id is not a UUID', async () => {
+      const res = await request(ctx.app).get('/events/abc');
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('also responds with a USER or ADMIN token', async () => {
+      const { id } = await insertEvent(ctx.db);
+      for (const token of [userToken, adminToken]) {
+        const res = await request(ctx.app).get(`/events/${id}`).set(...bearer(token));
+        expect(res.status).toBe(200);
+        expect(res.body.id).toBe(id);
+      }
+    });
+  });
 });

@@ -12,11 +12,15 @@ export async function createUserAndLogin(
   db: Db,
   role: Role,
   email = `${role.toLowerCase()}@mail.com`,
-): Promise<{ token: string; email: string }> {
+): Promise<{ token: string; email: string; userId: string }> {
   const passwordHash = await new Argon2PasswordHasher().hash(PASSWORD);
-  await db.insertInto('users').values({ email, password_hash: passwordHash, role }).execute();
+  const { id: userId } = await db
+    .insertInto('users')
+    .values({ email, password_hash: passwordHash, role })
+    .returning('id')
+    .executeTakeFirstOrThrow();
   const res = await request(app).post('/auth/login').send({ email, password: PASSWORD });
-  return { token: res.body.accessToken as string, email };
+  return { token: res.body.accessToken as string, email, userId };
 }
 
 export function bearer(token: string): [string, string] {
