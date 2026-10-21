@@ -85,11 +85,23 @@ Al cancelar, el sistema SHALL pasar a `CANCELLED` las reservas `ACTIVE` del even
 - **THEN** su estado no cambia
 
 ### Requirement: Tickets del evento
-La respuesta SHALL incluir `cancelledTickets` con la cantidad de tickets emitidos del evento que pasaron a cancelados. Mientras no existan tickets emitidos, su valor MUST ser 0.
+Al cancelar, el sistema SHALL pasar a `CANCELLED_BY_EVENT` los tickets `ISSUED` del evento y marcar sus pagos como `REFUND_PENDING`, y la respuesta SHALL incluir `cancelledTickets` con la cantidad de tickets cancelados. Los tickets no se eliminan. MUST NOT modificarse tickets de otros eventos. Mientras no existan tickets emitidos en el evento, `cancelledTickets` MUST ser 0.
 
 #### Scenario: Evento sin tickets
 - **WHEN** se cancela un evento sin tickets emitidos
 - **THEN** `cancelledTickets` es 0
+
+#### Scenario: Evento con tickets vendidos
+- **WHEN** se cancela un evento con 3 tickets `ISSUED`
+- **THEN** los 3 quedan `CANCELLED_BY_EVENT`, sus pagos quedan `REFUND_PENDING` y `cancelledTickets` es 3
+
+#### Scenario: Otro evento intacto
+- **WHEN** se cancela un evento
+- **THEN** los tickets y pagos de los demás eventos no cambian
+
+#### Scenario: Tickets conservados
+- **WHEN** un evento fue cancelado
+- **THEN** sus tickets siguen existiendo y aparecen en `GET /tickets/me` con `status` `CANCELLED_BY_EVENT`
 
 ### Requirement: Operaciones posteriores bloqueadas
 Una vez cancelado el evento, el sistema MUST rechazar nuevas reservas sobre él con `409` y `code` `EVENT_NOT_ACTIVE`.

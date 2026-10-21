@@ -53,6 +53,10 @@ pnpm dev
 Si falta una variable obligatoria el proceso termina indicando cuál. El seed solo actúa si no existe
 ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente.
 
+## Pruebas de integración con la pasarela real
+
+La suite automática (`pnpm test`) no necesita la pasarela. Para validar la integración contra el microservicio real hay un script y su documentación: [`docs/test-suite.md`](docs/test-suite.md) (cómo levantar primero la pasarela, luego `ticket-api`, y ejecutar `./scripts/verify-gateway.sh`).
+
 ## Scripts
 
 | Script | Descripción |
