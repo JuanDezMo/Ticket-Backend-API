@@ -29,6 +29,10 @@ export class SeatService {
     return this.seats.markReserved(seatId, executor);
   }
 
+  blockAllByEvent(eventId: string, executor: Db): Promise<number> {
+    return this.seats.blockAllByEvent(eventId, executor);
+  }
+
   async listByEvent(eventId: string, status?: SeatStatus): Promise<PublicSeat[]> {
     return (await this.seats.findByEvent(eventId, status)).map(toPublicSeat);
   }

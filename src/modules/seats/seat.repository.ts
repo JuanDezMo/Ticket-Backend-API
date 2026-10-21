@@ -11,6 +11,8 @@ export interface SeatRepository {
   findByEventAndPosition(eventId: string, position: SeatPosition): Promise<Seat | null>;
   /** Pasa el seat a RESERVED solo si está AVAILABLE. Devuelve false si no cambió nada. */
   markReserved(seatId: string, executor?: Db): Promise<boolean>;
+  /** Pasa a BLOCKED todos los seats del evento que no lo estén. Devuelve cuántos cambió. */
+  blockAllByEvent(eventId: string, executor?: Db): Promise<number>;
 }
 
 function toSeat(row: Selectable<Seats>): Seat {
@@ -57,6 +59,16 @@ export class KyselySeatRepository implements SeatRepository {
       .where('status', '=', SEAT_STATUSES.AVAILABLE)
       .executeTakeFirst();
     return result.numUpdatedRows > 0n;
+  }
+
+  async blockAllByEvent(eventId: string, executor: Db = this.db): Promise<number> {
+    const result = await executor
+      .updateTable('seats')
+      .set({ status: SEAT_STATUSES.BLOCKED })
+      .where('event_id', '=', eventId)
+      .where('status', '<>', SEAT_STATUSES.BLOCKED)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
   }
 
   async findByEvent(eventId: string, status?: SeatStatus): Promise<Seat[]> {

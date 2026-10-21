@@ -33,7 +33,7 @@ El sistema MUST garantizar a nivel de datos que no existan dos seats con la mism
 - **THEN** la operación es rechazada por la base de datos
 
 ### Requirement: Listado de seats de un evento
-El sistema SHALL exponer `GET /events/:id/seats`, que requiere autenticación y responde `200` con `{ eventId, data: [seat] }`, donde cada seat incluye `id`, `row`, `number`, `label` (fila y número, por ejemplo `A1`) y `status`. SHALL aceptar el filtro opcional `status` con los valores `AVAILABLE`, `RESERVED`, `SOLD` o `BLOCKED`, y devolver los seats ordenados por fila y número.
+El sistema SHALL exponer `GET /events/:id/seats`, que requiere autenticación y responde `200` con `{ eventId, data: [seat] }`, donde cada seat incluye `id`, `row`, `number`, `label` (fila y número, por ejemplo `A1`) y `status`. SHALL aceptar el filtro opcional `status` con los valores `AVAILABLE`, `RESERVED`, `SOLD` o `BLOCKED`, y devolver los seats ordenados por fila y número. Antes de consultar, el sistema SHALL liberar las reservas vencidas del evento, de modo que ningún seat aparezca ocupado por una reserva ya vencida.
 
 #### Scenario: Seats disponibles de un evento nuevo
 - **WHEN** un usuario autenticado consulta `GET /events/:id/seats?status=AVAILABLE` de un evento con `capacity` 20
@@ -46,6 +46,14 @@ El sistema SHALL exponer `GET /events/:id/seats`, que requiere autenticación y 
 #### Scenario: Filtro inválido
 - **WHEN** `status` es `FREE`
 - **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR`
+
+#### Scenario: Reserva vencida liberada al listar
+- **WHEN** un seat tiene una reserva `ACTIVE` ya vencida y se consulta `status=AVAILABLE`
+- **THEN** el seat aparece como `AVAILABLE` y su reserva queda `EXPIRED`
+
+#### Scenario: Reserva vigente
+- **WHEN** un seat tiene una reserva `ACTIVE` que aún no vence
+- **THEN** el seat aparece como `RESERVED` y no figura entre los `AVAILABLE`
 
 ### Requirement: Evento inexistente o acceso sin autenticar
 El sistema MUST responder `404` con `code` `EVENT_NOT_FOUND` si el evento no existe y `401` con `code` `UNAUTHORIZED` si no hay token válido.

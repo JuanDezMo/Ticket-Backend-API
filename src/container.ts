@@ -18,6 +18,10 @@ import { EventService } from './modules/events/event.service.js';
 import { SeatController } from './modules/seats/seat.controller.js';
 import { KyselySeatRepository } from './modules/seats/seat.repository.js';
 import { SeatService } from './modules/seats/seat.service.js';
+import { CancellationController } from './modules/cancellations/cancellation.controller.js';
+import { CancellationService } from './modules/cancellations/cancellation.service.js';
+import { BlockSeatsStep } from './modules/cancellations/steps/block-seats.step.js';
+import { CancelReservationsStep } from './modules/cancellations/steps/cancel-reservations.step.js';
 import { ReservationController } from './modules/reservations/reservation.controller.js';
 import { ReservationExpiryJob } from './modules/reservations/reservation-expiry.job.js';
 import { KyselyReservationRepository } from './modules/reservations/reservation.repository.js';
@@ -51,6 +55,15 @@ export function buildContainer(
     env.RESERVATION_TTL_MINUTES,
   );
 
+  // IMPORTANTE: el orden de los pasos evita que una reserva simultánea quede ACTIVE sobre un
+  // evento cancelado. Primero se bloquean los seats y solo después se cancelan las reservas.
+  // ticket-purchase añadirá aquí un CancelTicketsStep.
+  const cancellationService = new CancellationService(
+    eventService,
+    [new BlockSeatsStep(seatService), new CancelReservationsStep(reservationService)],
+    db,
+  );
+
   return {
     logger,
     authenticate: authenticate(tokens),
@@ -65,6 +78,7 @@ export function buildContainer(
       env.RESERVATION_EXPIRY_INTERVAL_SECONDS,
     ),
     reservationService,
+    cancellationController: new CancellationController(cancellationService),
     healthController: new HealthController(new HealthService(db)),
     adminSeeder: new AdminSeeder(
       userService,

@@ -201,7 +201,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `GET /events` (público) | 200 | 400 paginación o filtros inválidos (`pageSize` fuera de 1 a 20, `page` menor a 1, tipo o fechas inválidos) |
 | `POST /events` (ADMIN) | 201 | 400, 401, 403 |
 | `GET /events/:id/seats` | 200 | 401, 404 |
-| `POST /events/:id/cancel` (ADMIN) | 200 | 401, 403, 404, 409 ya cancelado o terminado |
+| `POST /events/:id/cancel` (ADMIN) | 200 | 400 (id inválido), 401, 403, 404 `EVENT_NOT_FOUND`, 409 `EVENT_ALREADY_CANCELLED` o `EVENT_ALREADY_ENDED` |
 | `POST /reservations` (USER) | 201 | 400 (`eventId` o `seat` ausentes o inválidos), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `SEAT_NOT_AVAILABLE` o `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado) |
 | `POST /tickets/purchase` (USER) | 201 | ver tabla siguiente |
 | `GET /tickets/me` (USER) | 200 | 401, 403 |
@@ -263,7 +263,7 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 { "eventId": "uuid", "data": [ { "id": "uuid", "row": "A", "number": 1, "label": "A1", "status": "AVAILABLE" } ] }
 ```
 
-**`POST /events/:id/cancel`** → 200
+**`POST /events/:id/cancel`** → 200 (`cancelledTickets` vale 0 hasta que exista `ticket-purchase`)
 ```json
 { "id": "uuid", "status": "CANCELLED", "cancelledReservations": 4, "cancelledTickets": 12 }
 ```

@@ -41,6 +41,7 @@ function setup(overrides: { event?: Event; seat?: Seat | null; reserved?: boolea
   };
   const repo = {
     releaseExpired: vi.fn().mockResolvedValue(0),
+    cancelActiveByEvent: vi.fn().mockResolvedValue(0),
     create: vi.fn().mockResolvedValue(stored),
   } satisfies ReservationRepository;
   const trx = {};

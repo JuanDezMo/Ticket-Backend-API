@@ -8,6 +8,8 @@ export const ERROR_DEFINITIONS = {
   EVENT_NOT_FOUND: { status: 404, message: 'Event not found' },
   SEAT_NOT_FOUND: { status: 404, message: 'Seat not found' },
   SEAT_NOT_AVAILABLE: { status: 409, message: 'Seat is not available' },
+  EVENT_ALREADY_CANCELLED: { status: 409, message: 'Event is already cancelled' },
+  EVENT_ALREADY_ENDED: { status: 409, message: 'Event has already ended' },
   EVENT_NOT_ACTIVE: { status: 409, message: 'Event is not active or has already started' },
   EMAIL_ALREADY_EXISTS: { status: 409, message: 'Email already exists' },
   INTERNAL_ERROR: { status: 500, message: 'Internal server error' },

@@ -68,6 +68,10 @@ export class ReservationService {
     return toPublicReservation(reservation, `${seat.row}${seat.number}`);
   }
 
+  cancelActiveByEvent(eventId: string, executor: Db): Promise<number> {
+    return this.reservations.cancelActiveByEvent(eventId, executor);
+  }
+
   /** Libera las reservas vencidas de un evento (o de todos si no se indica). */
   releaseExpired(eventId?: string): Promise<number> {
     return this.reservations.releaseExpired(eventId);

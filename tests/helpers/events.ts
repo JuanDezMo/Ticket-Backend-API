@@ -87,3 +87,34 @@ export async function expireReservations(db: Db, seatId?: string) {
     .$if(seatId !== undefined, (qb) => qb.where('seat_id', '=', seatId as string))
     .execute();
 }
+
+/** Crea una reserva directamente en la BD (y deja el seat en el estado indicado). */
+export async function insertReservation(
+  db: Db,
+  input: {
+    userId: string;
+    eventId: string;
+    seatId: string;
+    status?: string;
+    expired?: boolean;
+    seatStatus?: string;
+  },
+) {
+  await db
+    .updateTable('seats')
+    .set({ status: input.seatStatus ?? 'RESERVED' })
+    .where('id', '=', input.seatId)
+    .execute();
+  return db
+    .insertInto('reservations')
+    .values({
+      user_id: input.userId,
+      seat_id: input.seatId,
+      event_id: input.eventId,
+      amount: 100,
+      status: input.status ?? 'ACTIVE',
+      expires_at: new Date(Date.now() + (input.expired ? -60_000 : 600_000)),
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+}

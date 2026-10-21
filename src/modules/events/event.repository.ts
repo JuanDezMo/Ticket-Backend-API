@@ -3,11 +3,20 @@ import type { Db } from '../../db/database.js';
 import type { Events } from '../../db/types.js';
 import { escapeLike } from '../../shared/utils/sql-like.js';
 import { offsetOf, type PaginationParams } from '../../shared/utils/pagination.js';
-import type { Event, EventFilters, EventStatus, EventType, NewEvent } from './event.types.js';
+import {
+  EVENT_STATUSES,
+  type Event,
+  type EventFilters,
+  type EventStatus,
+  type EventType,
+  type NewEvent,
+} from './event.types.js';
 
 export interface EventRepository {
   create(event: NewEvent, executor?: Db): Promise<Event>;
   findById(id: string): Promise<Event | null>;
+  /** Pasa el evento a CANCELLED solo si está ACTIVE. Devuelve false si no cambió nada. */
+  markCancelled(id: string, executor?: Db): Promise<boolean>;
   list(filters: EventFilters, page: PaginationParams): Promise<{ items: Event[]; total: number }>;
 }
 
@@ -46,6 +55,17 @@ export class KyselyEventRepository implements EventRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return toEvent(row);
+  }
+
+  async markCancelled(id: string, executor: Db = this.db): Promise<boolean> {
+    // UPDATE condicional: es la barrera contra cancelaciones simultáneas
+    const result = await executor
+      .updateTable('events')
+      .set({ status: EVENT_STATUSES.CANCELLED })
+      .where('id', '=', id)
+      .where('status', '=', EVENT_STATUSES.ACTIVE)
+      .executeTakeFirst();
+    return result.numUpdatedRows > 0n;
   }
 
   async findById(id: string): Promise<Event | null> {

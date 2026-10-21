@@ -14,6 +14,8 @@ export interface ReservationRepository {
   create(reservation: NewReservation, ttlMinutes: number, executor?: Db): Promise<Reservation>;
   /** Libera las reservas vencidas (todas, o solo las de un evento). Devuelve cuántos seats liberó. */
   releaseExpired(eventId?: string, executor?: Db): Promise<number>;
+  /** Libera las vencidas del evento y cancela las ACTIVE restantes. Devuelve cuántas canceló. */
+  cancelActiveByEvent(eventId: string, executor?: Db): Promise<number>;
 }
 
 function toReservation(row: Selectable<Reservations>): Reservation {
@@ -45,6 +47,18 @@ export class KyselyReservationRepository implements ReservationRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return toReservation(row);
+  }
+
+  async cancelActiveByEvent(eventId: string, executor: Db = this.db): Promise<number> {
+    // Las vencidas pasan a EXPIRED y no cuentan como canceladas
+    await this.releaseExpired(eventId, executor);
+    const result = await executor
+      .updateTable('reservations')
+      .set({ status: RESERVATION_STATUSES.CANCELLED })
+      .where('event_id', '=', eventId)
+      .where('status', '=', RESERVATION_STATUSES.ACTIVE)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
   }
 
   async releaseExpired(eventId?: string, executor: Db = this.db): Promise<number> {

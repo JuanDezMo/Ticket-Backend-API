@@ -1,7 +1,7 @@
 # ticket-api
 
 Backend de la plataforma de tickets (eventos, seats, reservas y compra de tickets).
-Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) `events-seats` (eventos y seats) y `reservations` (reservas con vencimiento).
+Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) `events-seats` (eventos y seats), `reservations` (reservas con vencimiento) y `event-cancellation` (cancelación de eventos).
 
 Documentación de referencia: `docs/business-rules.md` (reglas de negocio) y `docs/architecture.md` (arquitectura y contrato de la API).
 
@@ -70,6 +70,7 @@ ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente
 | `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
 | `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
+| `POST /events/:id/cancel` | ADMIN | Cancela el evento (no lo elimina): seats a `BLOCKED` y reservas `ACTIVE` a `CANCELLED`. Devuelve `{ id, status, cancelledReservations, cancelledTickets }` |
 | `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
 | `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
@@ -113,20 +114,6 @@ curl "localhost:3000/events?type=CONCERT&search=rock&page=1&pageSize=10"
 curl "localhost:3000/events/<EVENT_ID>/seats?status=AVAILABLE" -H "Authorization: Bearer $TOKEN"
 ```
 
-### Eventos y seats
-
-```bash
-# El ADMIN crea un evento de 25 puestos (las fechas deben ser futuras)
-curl -X POST localhost:3000/events -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"Rock Night","description":"Concierto","type":"CONCERT","venue":"Main Hall","price":150000,"capacity":25,"startDate":"2027-01-15T20:00:00Z","endDate":"2027-01-15T23:00:00Z"}'
-
-# Listado público con filtros y paginación
-curl "localhost:3000/events?type=CONCERT&search=rock&page=1&pageSize=10"
-
-# Seats disponibles (requiere token; <EVENT_ID> es el id devuelto al crear el evento)
-curl "localhost:3000/events/<EVENT_ID>/seats?status=AVAILABLE" -H "Authorization: Bearer $TOKEN"
-```
-
 ### Reservas
 
 ```bash
@@ -138,3 +125,85 @@ curl -X POST localhost:3000/reservations -H "Authorization: Bearer $USER_TOKEN" 
 La reserva dura `RESERVATION_TTL_MINUTES`. Las reservas vencidas se liberan al reservar, al listar los seats del evento y por un job
 periódico, así que el seat vuelve a `AVAILABLE`. Respuestas de error: `404` `EVENT_NOT_FOUND` / `SEAT_NOT_FOUND`,
 `409` `SEAT_NOT_AVAILABLE` / `EVENT_NOT_ACTIVE`.
+
+### Cancelación de eventos
+
+```bash
+# El ADMIN cancela un evento (no se elimina; sigue apareciendo en GET /events con status CANCELLED)
+curl -X POST localhost:3000/events/<EVENT_ID>/cancel -H "Authorization: Bearer $ADMIN_TOKEN"
+# {"id":"<EVENT_ID>","status":"CANCELLED","cancelledReservations":2,"cancelledTickets":0}
+```
+
+Respuestas de error: `404` `EVENT_NOT_FOUND`, `409` `EVENT_ALREADY_CANCELLED` (ya cancelado) y `409` `EVENT_ALREADY_ENDED` (su `endDate` ya pasó).
+Un evento que ya inició pero no ha terminado sí puede cancelarse. `cancelledTickets` vale 0 hasta que exista `ticket-purchase`.
+
+## Diseño: cancelación de eventos y SOLID
+
+> Diseño del cambio `event-cancellation`. Estado: implementado.
+
+`POST /events/:id/cancel` toca tres módulos a la vez: eventos, seats y reservas (y más adelante tickets). Para no crear ciclos entre
+módulos, la coordinación vive en un módulo propio, `cancellations`, que no tiene repository.
+
+### Cómo estaba (primera versión del diseño)
+
+`CancellationService` llamaba directamente a los services concretos de cada módulo:
+
+```
+CancellationService
+  |-- EventService.markCancelled(...)
+  |-- SeatService.blockAllByEvent(...)
+  |-- ReservationService.cancelActiveByEvent(...)
+  (y, con ticket-purchase, habría que añadir aquí: TicketService.cancelByEvent(...))
+```
+
+Problemas frente a SOLID:
+
+| Principio | Problema |
+|---|---|
+| Abierto/cerrado | Cada cascada nueva (tickets) obligaba a **editar** `CancellationService` |
+| Inversión de dependencias | Dependía de tres services concretos de otros módulos |
+| Segregación de interfaces | Usaba un método de cada service, pero conocía la clase completa |
+
+### Cómo se segregó
+
+La cascada se separó en **pasos** que implementan una interfaz mínima, y el servicio solo conoce esa interfaz:
+
+```ts
+interface CancellationStep {
+  readonly name: 'seats' | 'reservations' | 'tickets';
+  execute(eventId: string, trx: Db): Promise<number>; // cuántos registros afectó
+}
+```
+
+```
+CancellationService  --usa-->  EventService          (el evento es el núcleo de la operación)
+        |
+        +--usa-->  CancellationStep[]   (lista ordenada, ensamblada en container.ts)
+                       |-- BlockSeatsStep          -> SeatService.blockAllByEvent
+                       |-- CancelReservationsStep  -> ReservationService.cancelActiveByEvent
+                       '-- CancelTicketsStep       (se añadirá en ticket-purchase)
+```
+
+Flujo, todo dentro de una sola transacción:
+
+1. Se valida el evento (`404` si no existe, `409` si ya está cancelado o terminó).
+2. Se marca el evento `CANCELLED` (UPDATE condicional: si dos ADMIN cancelan a la vez, solo uno lo logra).
+3. Se ejecutan los pasos en el orden registrado y se acumulan los conteos por `name`.
+4. La respuesta usa `cancelledReservations` (paso `reservations`) y `cancelledTickets` (paso `tickets`, 0 mientras no exista).
+
+### Qué se gana
+
+| Principio | Cómo se cumple ahora |
+|---|---|
+| **S** Responsabilidad única | `CancellationService` solo coordina; cada paso hace una cosa y cada módulo conserva sus reglas |
+| **O** Abierto/cerrado | Añadir tickets = registrar un `CancelTicketsStep` en `container.ts`; `CancellationService` no se modifica |
+| **L** Sustitución | Cualquier paso (real o simulado en tests) es intercambiable bajo la misma interfaz |
+| **I** Segregación de interfaces | El servicio depende de una interfaz de dos miembros, no de clases completas |
+| **D** Inversión de dependencias | Depende de la abstracción `CancellationStep`; los services concretos solo los conocen los pasos |
+
+### Detalles a tener en cuenta
+
+- **El orden de los pasos importa.** Primero se bloquean los seats y después se cancelan las reservas `ACTIVE`; así una reserva simultánea
+  nunca queda activa sobre un evento cancelado. Por eso el orden de registro en `container.ts` está comentado y protegido por un test de carrera.
+- `ReservationRepository.releaseExpired` modifica también `seats` para ser atómico: es una excepción consciente a "un repository solo toca su tabla".
+- Costo del diseño: una interfaz y dos clases pequeñas más, a cambio de no tocar el servicio en cada cascada nueva.

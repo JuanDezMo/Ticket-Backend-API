@@ -42,6 +42,10 @@ export class EventService {
     return paginate(items.map(toPublicEvent), page, total);
   }
 
+  markCancelled(id: string, executor: Db): Promise<boolean> {
+    return this.events.markCancelled(id, executor);
+  }
+
   async getById(id: string): Promise<Event> {
     const event = await this.events.findById(id);
     if (!event) throw new AppError('EVENT_NOT_FOUND');
