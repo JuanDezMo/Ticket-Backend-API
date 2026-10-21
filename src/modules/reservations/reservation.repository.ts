@@ -16,6 +16,12 @@ export interface ReservationRepository {
   releaseExpired(eventId?: string, executor?: Db): Promise<number>;
   /** Libera las vencidas del evento y cancela las ACTIVE restantes. Devuelve cuántas canceló. */
   cancelActiveByEvent(eventId: string, executor?: Db): Promise<number>;
+  /** Busca la reserva e indica si venció según la hora de la BD (expires_at <= now()). */
+  findForPurchase(id: string): Promise<{ reservation: Reservation; expired: boolean } | null>;
+  /** SELECT ... FOR UPDATE: serializa compras simultáneas de la misma reserva. */
+  lockById(id: string, executor: Db): Promise<Reservation | null>;
+  /** ACTIVE -> CONFIRMED. Devuelve false si la reserva ya no estaba ACTIVE. */
+  markConfirmed(id: string, executor: Db): Promise<boolean>;
 }
 
 function toReservation(row: Selectable<Reservations>): Reservation {
@@ -47,6 +53,36 @@ export class KyselyReservationRepository implements ReservationRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return toReservation(row);
+  }
+
+  async findForPurchase(id: string) {
+    const row = await this.db
+      .selectFrom('reservations')
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as('expired'))
+      .where('id', '=', id)
+      .executeTakeFirst();
+    return row ? { reservation: toReservation(row), expired: row.expired } : null;
+  }
+
+  async lockById(id: string, executor: Db): Promise<Reservation | null> {
+    const row = await executor
+      .selectFrom('reservations')
+      .selectAll()
+      .where('id', '=', id)
+      .forUpdate()
+      .executeTakeFirst();
+    return row ? toReservation(row) : null;
+  }
+
+  async markConfirmed(id: string, executor: Db): Promise<boolean> {
+    const result = await executor
+      .updateTable('reservations')
+      .set({ status: RESERVATION_STATUSES.CONFIRMED })
+      .where('id', '=', id)
+      .where('status', '=', RESERVATION_STATUSES.ACTIVE)
+      .executeTakeFirst();
+    return result.numUpdatedRows > 0n;
   }
 
   async cancelActiveByEvent(eventId: string, executor: Db = this.db): Promise<number> {

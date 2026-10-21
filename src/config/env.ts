@@ -10,6 +10,9 @@ const envSchema = z.object({
   // El seed del primer ADMIN es opcional: si faltan, el arranque continúa con un aviso
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().min(8).optional(),
+  PAYMENT_GATEWAY_URL: z.url(),
+  PAYMENT_GATEWAY_API_KEY: z.string().min(1),
+  PAYMENT_GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   RESERVATION_TTL_MINUTES: z.coerce.number().int().positive().default(10),
   RESERVATION_EXPIRY_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 });

@@ -27,6 +27,17 @@ export interface Events {
   venue: string;
 }
 
+export interface Payments {
+  amount: Numeric;
+  created_at: Generated<Timestamp>;
+  event_id: string;
+  id: Generated<string>;
+  reservation_id: string;
+  status: string;
+  transaction_id: string;
+  user_id: string;
+}
+
 export interface Reservations {
   amount: Numeric;
   created_at: Generated<Timestamp>;
@@ -46,6 +57,18 @@ export interface Seats {
   status: Generated<string>;
 }
 
+export interface Tickets {
+  amount: Numeric;
+  event_id: string;
+  id: Generated<string>;
+  issued_at: Generated<Timestamp>;
+  payment_id: string;
+  reservation_id: string;
+  seat_id: string;
+  status: Generated<string>;
+  user_id: string;
+}
+
 export interface Users {
   created_at: Generated<Timestamp>;
   email: string;
@@ -56,7 +79,9 @@ export interface Users {
 
 export interface DB {
   events: Events;
+  payments: Payments;
   reservations: Reservations;
   seats: Seats;
+  tickets: Tickets;
   users: Users;
 }

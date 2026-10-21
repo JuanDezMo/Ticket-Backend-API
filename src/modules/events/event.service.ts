@@ -42,6 +42,10 @@ export class EventService {
     return paginate(items.map(toPublicEvent), page, total);
   }
 
+  findForShare(id: string, executor: Db): Promise<Event | null> {
+    return this.events.findForShare(id, executor);
+  }
+
   markCancelled(id: string, executor: Db): Promise<boolean> {
     return this.events.markCancelled(id, executor);
   }

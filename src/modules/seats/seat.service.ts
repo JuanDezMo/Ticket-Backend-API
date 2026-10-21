@@ -29,6 +29,14 @@ export class SeatService {
     return this.seats.markReserved(seatId, executor);
   }
 
+  markSold(seatId: string, executor: Db): Promise<boolean> {
+    return this.seats.markSold(seatId, executor);
+  }
+
+  findById(id: string): Promise<Seat | null> {
+    return this.seats.findById(id);
+  }
+
   blockAllByEvent(eventId: string, executor: Db): Promise<number> {
     return this.seats.blockAllByEvent(eventId, executor);
   }

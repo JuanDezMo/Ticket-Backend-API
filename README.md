@@ -1,7 +1,7 @@
 # ticket-api
 
 Backend de la plataforma de tickets (eventos, seats, reservas y compra de tickets).
-Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) `events-seats` (eventos y seats), `reservations` (reservas con vencimiento) y `event-cancellation` (cancelación de eventos).
+Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) `events-seats` (eventos y seats), `reservations` (reservas con vencimiento) `event-cancellation` (cancelación de eventos) y `ticket-purchase` (compra de tickets con la pasarela de pagos).
 
 Documentación de referencia: `docs/business-rules.md` (reglas de negocio) y `docs/architecture.md` (arquitectura y contrato de la API).
 
@@ -28,6 +28,8 @@ pnpm install
 docker compose up -d postgres     # PostgreSQL en localhost:5433
 export DATABASE_URL=postgres://ticket:<POSTGRES_PASSWORD>@localhost:5433/ticket_api
 export JWT_SECRET=<mínimo 16 caracteres>
+export PAYMENT_GATEWAY_URL=http://localhost:8080      # pasarela de pagos (proyecto externo)
+export PAYMENT_GATEWAY_API_KEY=<la misma key que usa la pasarela>
 pnpm dev
 ```
 
@@ -37,6 +39,9 @@ pnpm dev
 |---|---|---|
 | `DATABASE_URL` | Sí | Cadena de conexión a PostgreSQL |
 | `JWT_SECRET` | Sí | Secreto para firmar los JWT (mínimo 16 caracteres) |
+| `PAYMENT_GATEWAY_URL` | Sí | URL base de la pasarela de pagos. Desde Docker, una pasarela local es `http://host.docker.internal:8080` |
+| `PAYMENT_GATEWAY_API_KEY` | Sí | API key que se envía como `Authorization: Bearer` a la pasarela |
+| `PAYMENT_GATEWAY_TIMEOUT_MS` | No | Tiempo límite de la llamada a la pasarela, por defecto 5000 |
 | `JWT_EXPIRES_IN_SECONDS` | No | Vida del token, por defecto 3600 |
 | `PORT` | No | Puerto HTTP, por defecto 3000 |
 | `LOG_LEVEL` | No | `info` por defecto |
@@ -71,9 +76,8 @@ ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
 | `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
 | `POST /events/:id/cancel` | ADMIN | Cancela el evento (no lo elimina): seats a `BLOCKED` y reservas `ACTIVE` a `CANCELLED`. Devuelve `{ id, status, cancelledReservations, cancelledTickets }` |
-| `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
-| `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
-| `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
+| `POST /tickets/purchase` | USER | Paga una reserva y emite el ticket. Body: `reservationId` y `card` (`brand`, `number`, `expiry`, `cvv`). `201` al emitir; `200` con el mismo ticket si la reserva ya estaba pagada |
+| `GET /tickets/me` | USER | Mis tickets, paginados (`page`, `pageSize` de 1 a 20), con los de eventos cancelados como `CANCELLED_BY_EVENT` |
 | `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
 
 Errores con el formato `{ "code": "...", "message": "..." }`.
@@ -126,16 +130,36 @@ La reserva dura `RESERVATION_TTL_MINUTES`. Las reservas vencidas se liberan al r
 periódico, así que el seat vuelve a `AVAILABLE`. Respuestas de error: `404` `EVENT_NOT_FOUND` / `SEAT_NOT_FOUND`,
 `409` `SEAT_NOT_AVAILABLE` / `EVENT_NOT_ACTIVE`.
 
+### Compra de tickets
+
+```bash
+# El USER paga su reserva con tarjeta; el monto lo calcula el servidor (el del evento)
+curl -X POST localhost:3000/tickets/purchase -H "Authorization: Bearer $USER_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"reservationId":"<RESERVATION_ID>","card":{"brand":"VISA","number":"4111111111111111","expiry":"12/28","cvv":"123"}}'
+
+# Mis tickets
+curl "localhost:3000/tickets/me?page=1&pageSize=10" -H "Authorization: Bearer $USER_TOKEN"
+```
+
+Reglas a tener en cuenta:
+- Para probar contra la pasarela real hay que levantarla (`PAYMENT_GATEWAY_URL`). Con ella, una tarjeta que termina en `0000` se rechaza (`402`) y en `9999` simula un error (`502`, y al tercer intento `422`).
+- La franquicia (`card.brand`) es obligatoria y solo admite `VISA`, `MASTERCARD` o `AMEX` (en minúscula también se acepta). Si falta responde `400` `CARD_BRAND_REQUIRED` ("Card brand is required. Use VISA, MASTERCARD or AMEX"); si no es una de las tres, `400` `CARD_BRAND_NOT_ALLOWED` ("Card brand not allowed. Use VISA, MASTERCARD or AMEX"). En ambos casos no se llama a la pasarela.
+- Respuestas cuando el pago no se aprueba: `402` `PAYMENT_REJECTED`, `422` `CARD_PROBLEM`, `502` `PAYMENT_GATEWAY_ERROR`, `504` `PAYMENT_GATEWAY_TIMEOUT` (límite de `PAYMENT_GATEWAY_TIMEOUT_MS`). La reserva sigue activa para reintentar; no hay reintentos automáticos.
+- `409` `RESERVATION_EXPIRED` si la reserva venció o ya no está activa, y `409` `EVENT_CANCELLED` si el evento fue cancelado.
+- Repetir la compra de una reserva ya pagada devuelve `200` con el mismo ticket, sin cobrar de nuevo.
+- Si el evento se cancela (o la reserva se libera) mientras se paga, no se emite el ticket y el pago queda registrado como `REFUND_PENDING`.
+- `ticket-api` no guarda ni registra el número, el vencimiento ni el CVV de la tarjeta.
+
 ### Cancelación de eventos
 
 ```bash
 # El ADMIN cancela un evento (no se elimina; sigue apareciendo en GET /events con status CANCELLED)
 curl -X POST localhost:3000/events/<EVENT_ID>/cancel -H "Authorization: Bearer $ADMIN_TOKEN"
-# {"id":"<EVENT_ID>","status":"CANCELLED","cancelledReservations":2,"cancelledTickets":0}
+# {"id":"<EVENT_ID>","status":"CANCELLED","cancelledReservations":2,"cancelledTickets":3}
 ```
 
 Respuestas de error: `404` `EVENT_NOT_FOUND`, `409` `EVENT_ALREADY_CANCELLED` (ya cancelado) y `409` `EVENT_ALREADY_ENDED` (su `endDate` ya pasó).
-Un evento que ya inició pero no ha terminado sí puede cancelarse. `cancelledTickets` vale 0 hasta que exista `ticket-purchase`.
+Un evento que ya inició pero no ha terminado sí puede cancelarse. Los tickets vendidos pasan a `CANCELLED_BY_EVENT` y sus pagos quedan `REFUND_PENDING` (no hay reembolso automático); `cancelledTickets` cuenta cuántos fueron.
 
 ## Diseño: cancelación de eventos y SOLID
 
@@ -153,7 +177,7 @@ CancellationService
   |-- EventService.markCancelled(...)
   |-- SeatService.blockAllByEvent(...)
   |-- ReservationService.cancelActiveByEvent(...)
-  (y, con ticket-purchase, habría que añadir aquí: TicketService.cancelByEvent(...))
+  (y, al llegar ticket-purchase, habría sido necesario editar este servicio para añadir TicketService.cancelByEvent(...))
 ```
 
 Problemas frente a SOLID:
@@ -181,7 +205,7 @@ CancellationService  --usa-->  EventService          (el evento es el núcleo de
         +--usa-->  CancellationStep[]   (lista ordenada, ensamblada en container.ts)
                        |-- BlockSeatsStep          -> SeatService.blockAllByEvent
                        |-- CancelReservationsStep  -> ReservationService.cancelActiveByEvent
-                       '-- CancelTicketsStep       (se añadirá en ticket-purchase)
+                       '-- CancelTicketsStep       -> TicketService.cancelByEvent  (añadido con ticket-purchase, sin tocar CancellationService)
 ```
 
 Flujo, todo dentro de una sola transacción:
@@ -189,7 +213,7 @@ Flujo, todo dentro de una sola transacción:
 1. Se valida el evento (`404` si no existe, `409` si ya está cancelado o terminó).
 2. Se marca el evento `CANCELLED` (UPDATE condicional: si dos ADMIN cancelan a la vez, solo uno lo logra).
 3. Se ejecutan los pasos en el orden registrado y se acumulan los conteos por `name`.
-4. La respuesta usa `cancelledReservations` (paso `reservations`) y `cancelledTickets` (paso `tickets`, 0 mientras no exista).
+4. La respuesta usa `cancelledReservations` (paso `reservations`) y `cancelledTickets` (paso `tickets`).
 
 ### Qué se gana
 

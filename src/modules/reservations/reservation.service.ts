@@ -68,6 +68,18 @@ export class ReservationService {
     return toPublicReservation(reservation, `${seat.row}${seat.number}`);
   }
 
+  findForPurchase(id: string) {
+    return this.reservations.findForPurchase(id);
+  }
+
+  lockById(id: string, executor: Db): Promise<Reservation | null> {
+    return this.reservations.lockById(id, executor);
+  }
+
+  markConfirmed(id: string, executor: Db): Promise<boolean> {
+    return this.reservations.markConfirmed(id, executor);
+  }
+
   cancelActiveByEvent(eventId: string, executor: Db): Promise<number> {
     return this.reservations.cancelActiveByEvent(eventId, executor);
   }

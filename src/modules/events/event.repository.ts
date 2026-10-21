@@ -17,6 +17,8 @@ export interface EventRepository {
   findById(id: string): Promise<Event | null>;
   /** Pasa el evento a CANCELLED solo si está ACTIVE. Devuelve false si no cambió nada. */
   markCancelled(id: string, executor?: Db): Promise<boolean>;
+  /** Lee el evento con SELECT ... FOR SHARE: una cancelación simultánea espera a que termine la transacción. */
+  findForShare(id: string, executor?: Db): Promise<Event | null>;
   list(filters: EventFilters, page: PaginationParams): Promise<{ items: Event[]; total: number }>;
 }
 
@@ -55,6 +57,16 @@ export class KyselyEventRepository implements EventRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return toEvent(row);
+  }
+
+  async findForShare(id: string, executor: Db = this.db): Promise<Event | null> {
+    const row = await executor
+      .selectFrom('events')
+      .selectAll()
+      .where('id', '=', id)
+      .forShare()
+      .executeTakeFirst();
+    return row ? toEvent(row) : null;
   }
 
   async markCancelled(id: string, executor: Db = this.db): Promise<boolean> {

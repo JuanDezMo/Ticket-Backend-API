@@ -22,6 +22,14 @@ import { CancellationController } from './modules/cancellations/cancellation.con
 import { CancellationService } from './modules/cancellations/cancellation.service.js';
 import { BlockSeatsStep } from './modules/cancellations/steps/block-seats.step.js';
 import { CancelReservationsStep } from './modules/cancellations/steps/cancel-reservations.step.js';
+import { CancelTicketsStep } from './modules/cancellations/steps/cancel-tickets.step.js';
+import { HttpPaymentGateway } from './modules/payments/http-payment-gateway.js';
+import type { PaymentGateway } from './modules/payments/payment-gateway.js';
+import { KyselyPaymentRepository } from './modules/payments/payment.repository.js';
+import { PaymentService } from './modules/payments/payment.service.js';
+import { TicketController } from './modules/tickets/ticket.controller.js';
+import { KyselyTicketRepository } from './modules/tickets/ticket.repository.js';
+import { TicketService } from './modules/tickets/ticket.service.js';
 import { ReservationController } from './modules/reservations/reservation.controller.js';
 import { ReservationExpiryJob } from './modules/reservations/reservation-expiry.job.js';
 import { KyselyReservationRepository } from './modules/reservations/reservation.repository.js';
@@ -30,6 +38,7 @@ import { ReservationService } from './modules/reservations/reservation.service.j
 export interface ContainerOverrides {
   hasher?: PasswordHasher;
   tokens?: TokenService;
+  gateway?: PaymentGateway;
 }
 
 /** Raíz de composición: único lugar donde se crean y conectan las instancias. */
@@ -55,12 +64,35 @@ export function buildContainer(
     env.RESERVATION_TTL_MINUTES,
   );
 
+  const gateway =
+    overrides.gateway ??
+    new HttpPaymentGateway(
+      env.PAYMENT_GATEWAY_URL,
+      env.PAYMENT_GATEWAY_API_KEY,
+      env.PAYMENT_GATEWAY_TIMEOUT_MS,
+      logger,
+    );
+  const paymentService = new PaymentService(gateway, new KyselyPaymentRepository(db), logger);
+  const ticketService = new TicketService(
+    new KyselyTicketRepository(db),
+    reservationService,
+    eventService,
+    seatService,
+    paymentService,
+    db,
+    logger,
+  );
+
   // IMPORTANTE: el orden de los pasos evita que una reserva simultánea quede ACTIVE sobre un
-  // evento cancelado. Primero se bloquean los seats y solo después se cancelan las reservas.
-  // ticket-purchase añadirá aquí un CancelTicketsStep.
+  // evento cancelado. Primero se bloquean los seats, luego se cancelan las reservas y por último
+  // los tickets (con sus pagos a REFUND_PENDING).
   const cancellationService = new CancellationService(
     eventService,
-    [new BlockSeatsStep(seatService), new CancelReservationsStep(reservationService)],
+    [
+      new BlockSeatsStep(seatService),
+      new CancelReservationsStep(reservationService),
+      new CancelTicketsStep(ticketService),
+    ],
     db,
   );
 
@@ -78,6 +110,7 @@ export function buildContainer(
       env.RESERVATION_EXPIRY_INTERVAL_SECONDS,
     ),
     reservationService,
+    ticketController: new TicketController(ticketService),
     cancellationController: new CancellationController(cancellationService),
     healthController: new HealthController(new HealthService(db)),
     adminSeeder: new AdminSeeder(

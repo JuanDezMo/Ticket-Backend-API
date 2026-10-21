@@ -132,6 +132,8 @@ Reglas:
 - Usa `PAYMENT_GATEWAY_URL` y `PAYMENT_GATEWAY_API_KEY` (variables de entorno, ver RN-PAY-7).
 - Aplica timeout de 5 s con `AbortSignal.timeout` (`PAYMENT_GATEWAY_TIMEOUT_MS`, configurable) y convierte la respuesta HTTP en un resultado interno según la tabla 8.7 de `business-rules.md`.
 - El `service` de tickets solo conoce la interfaz, nunca `fetch`.
+- Registro de cobros: la tabla `payments` guarda `transactionId`, monto y estado (`APPROVED` o `REFUND_PENDING`); nunca datos de tarjeta. Un cobro aprobado que no puede convertirse en ticket (evento cancelado, reserva liberada o fallo inesperado) queda `REFUND_PENDING`. Los tickets cancelados por un evento también dejan su pago `REFUND_PENDING`.
+- Pruebas con MSW: los handlers parten de los ejemplos del `openapi.json` de la pasarela.
 - Sin reintentos automáticos (RN-TKT-11): una llamada por intento del usuario. Un timeout se trata como error temporal y la reserva sigue `ACTIVE`; reintentar es seguro por la idempotencia de la pasarela.
 
 ## 8. Expiración de reservas
@@ -203,8 +205,8 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `GET /events/:id/seats` | 200 | 401, 404 |
 | `POST /events/:id/cancel` (ADMIN) | 200 | 400 (id inválido), 401, 403, 404 `EVENT_NOT_FOUND`, 409 `EVENT_ALREADY_CANCELLED` o `EVENT_ALREADY_ENDED` |
 | `POST /reservations` (USER) | 201 | 400 (`eventId` o `seat` ausentes o inválidos), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `SEAT_NOT_AVAILABLE` o `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado) |
-| `POST /tickets/purchase` (USER) | 201 | ver tabla siguiente |
-| `GET /tickets/me` (USER) | 200 | 401, 403 |
+| `POST /tickets/purchase` (USER) | 201 al emitir; 200 si la reserva ya tenía ticket (mismo ticket, sin nuevo cobro) | ver tabla siguiente |
+| `GET /tickets/me` (USER) | 200 | 400 (paginación inválida), 401, 403 |
 
 Compra (`POST /tickets/purchase`):
 
@@ -277,7 +279,7 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 }
 ```
 
-**`POST /tickets/purchase`** → 201
+**`POST /tickets/purchase`** → 201 (200 con el mismo cuerpo si la reserva ya tenía ticket)
 
 Solicitud: `{ "reservationId": "uuid", "card": { "brand": "VISA", "number": "...", "expiry": "12/28", "cvv": "123" } }`. `card.brand` es obligatoria (`VISA`, `MASTERCARD` o `AMEX`); si falta o no es válida, `ticket-api` responde `400` sin llamar a la pasarela, con un código y un mensaje específicos (ver la tabla de la compra).
 ```json
@@ -288,13 +290,14 @@ Solicitud: `{ "reservationId": "uuid", "card": { "brand": "VISA", "number": "...
 }
 ```
 
-**`GET /tickets/me`** → 200 (un ticket de un evento cancelado aparece con `status: "CANCELLED_BY_EVENT"`)
+**`GET /tickets/me`** → 200, paginado con `page` y `pageSize` (1 a 20) y `meta` (un ticket de un evento cancelado aparece con `status: "CANCELLED_BY_EVENT"`)
 ```json
 {
   "data": [ {
     "id": "uuid", "status": "ISSUED", "seat": "C7", "amount": 150000, "issuedAt": "2026-10-20T15:05:00Z",
     "event": { "id": "uuid", "name": "Rock Night", "venue": "Main Hall", "startDate": "2026-12-01T20:00:00Z" }
-  } ]
+  } ],
+  "meta": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 }
 }
 ```
 

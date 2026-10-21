@@ -23,6 +23,8 @@ export function testEnv(overrides: Record<string, string | undefined> = {}): Env
     DATABASE_URL: process.env.TEST_DATABASE_URL,
     JWT_SECRET: 'test-secret-with-more-than-16-chars',
     JWT_EXPIRES_IN_SECONDS: '3600',
+    PAYMENT_GATEWAY_URL: 'http://payment-gateway.test',
+    PAYMENT_GATEWAY_API_KEY: 'test-gateway-key',
     ...overrides,
   });
 }

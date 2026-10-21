@@ -4,6 +4,8 @@ import { ConfigError, loadEnv } from '../../src/config/env.js';
 const valid = {
   DATABASE_URL: 'postgres://u:p@localhost:5432/db',
   JWT_SECRET: 'a-secret-with-more-than-16-chars',
+  PAYMENT_GATEWAY_URL: 'http://payment-gateway.test',
+  PAYMENT_GATEWAY_API_KEY: 'gateway-key',
 };
 
 describe('loadEnv', () => {
@@ -20,7 +22,7 @@ describe('loadEnv', () => {
 
   it('fails naming DATABASE_URL when it is missing', () => {
     try {
-      loadEnv({ JWT_SECRET: valid.JWT_SECRET });
+      loadEnv({ ...valid, DATABASE_URL: undefined });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigError);
@@ -63,6 +65,28 @@ describe('loadEnv', () => {
   it.each(['0', 'abc'])('rejects expiry interval %j', (value) => {
     expect(() => loadEnv({ ...valid, RESERVATION_EXPIRY_INTERVAL_SECONDS: value })).toThrowError(
       /RESERVATION_EXPIRY_INTERVAL_SECONDS/,
+    );
+  });
+
+  it('defaults the payment gateway timeout to 5000 ms and accepts a custom one', () => {
+    expect(loadEnv(valid).PAYMENT_GATEWAY_TIMEOUT_MS).toBe(5000);
+    expect(
+      loadEnv({ ...valid, PAYMENT_GATEWAY_TIMEOUT_MS: '250' }).PAYMENT_GATEWAY_TIMEOUT_MS,
+    ).toBe(250);
+  });
+
+  it.each(['PAYMENT_GATEWAY_URL', 'PAYMENT_GATEWAY_API_KEY'])(
+    'fails naming %s when it is missing',
+    (name) => {
+      const rest: Record<string, string> = { ...valid };
+      delete rest[name];
+      expect(() => loadEnv(rest)).toThrowError(new RegExp(name));
+    },
+  );
+
+  it.each(['0', '-1', 'abc'])('rejects payment gateway timeout %j', (value) => {
+    expect(() => loadEnv({ ...valid, PAYMENT_GATEWAY_TIMEOUT_MS: value })).toThrowError(
+      /PAYMENT_GATEWAY_TIMEOUT_MS/,
     );
   });
 });
