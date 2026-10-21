@@ -1,0 +1,25 @@
+# Dependencias y build
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Variables de entorno (el ejemplo sí se versiona)
+.env
+.env.*
+!.env.example
+
+# Claude Code (skills, comandos y configuración local)
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Sistema operativo e IDEs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

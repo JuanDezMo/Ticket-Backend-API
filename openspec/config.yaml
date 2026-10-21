@@ -1,0 +1,54 @@
+schema: spec-driven
+
+context: |
+  Proyecto: ticket-api, backend de una plataforma de tickets (eventos, seats,
+  reservas y compra de tickets). Documentos de referencia: docs/business-rules.md
+  (reglas de negocio y contrato con la pasarela) y docs/architecture.md
+  (arquitectura, estructura y contrato de la API).
+
+  Stack: Node 22, Express 5, TypeScript (ESM, JavaScript moderno), pnpm, PostgreSQL,
+  Kysely + pg (migraciones de Kysely, tipos con kysely-codegen), zod, jsonwebtoken,
+  argon2, pino, fetch nativo con AbortSignal.timeout, Docker y docker-compose.
+  Calidad y pruebas: ESLint, Prettier, Vitest, supertest, Testcontainers PostgreSQL
+  (no BD en memoria), MSW para simular la pasarela y dependency-cruiser para las
+  reglas de arquitectura.
+
+  Idioma: codigo, nombres, mensajes de respuesta de la API, logs y tests en ingles.
+  Documentos (OpenSpec, README, docs) y comentarios necesarios en el codigo en espanol.
+
+  Estructura por modulos en src/modules/<modulo>/ con los archivos
+  <x>.routes.ts, <x>.controller.ts, <x>.service.ts, <x>.repository.ts,
+  <x>.schemas.ts y <x>.types.ts. Compartido en src/shared (errors, middleware, utils).
+  Flujo: routes -> controller -> service -> repository -> Kysely.
+  El controller solo maneja HTTP, el service no conoce req ni res, el repository solo
+  consulta. Un service puede usar el service de otro modulo, nunca su repository.
+  Las transacciones se abren en el service y se pasan a los repositories.
+  Inyeccion por constructor, ensamblada en src/container.ts. Sin literales de negocio
+  en service ni controller: constantes y enums para estados, codigos y mensajes.
+
+  Contrato de la API: recursos como objeto directo, listas dentro de data, IDs UUID,
+  fechas ISO 8601 UTC. Listados paginados con page y pageSize (1 a 20, un valor mayor
+  responde 400) y meta { page, pageSize, total, totalPages }. Errores con el formato { code, message } y un ErrorCode por
+  caso. Codigos HTTP: 200/201 exito, 400 validacion, 401 sin autenticar, 403 sin
+  permiso, 404 no encontrado, 409 conflicto de estado, 402 pago rechazado,
+  422 tarjeta con problemas, 502 error de la pasarela, 504 timeout, 500 generico.
+
+  Reglas clave: el registro publico crea siempre USER; solo un ADMIN crea otros usuarios
+  (POST /users) y el primer ADMIN se crea por seed con SEED_ADMIN_EMAIL y
+  SEED_ADMIN_PASSWORD; JWT con sub y role;
+  solo ADMIN crea y cancela eventos; seats A1.. en filas de 10 segun capacity;
+  la reserva guarda expires_at y la compra lo valida; timeout de 5 s hacia la
+  pasarela y sin reintentos automaticos; ticket-api no guarda ni registra datos
+  de tarjeta.
+
+rules:
+  proposal:
+    - Incluir una seccion de fuera de alcance
+  specs:
+    - Describir comportamiento observable, sin nombres de clases ni librerias
+    - Los mensajes de respuesta de la API se escriben en ingles
+  design:
+    - Respetar la estructura por modulos y las reglas de dependencia del contexto
+  tasks:
+    - Cada tarea indica como se verifica
+    - Respetar el idioma del contexto (codigo en ingles, documentos en espanol)
