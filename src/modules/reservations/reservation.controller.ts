@@ -19,4 +19,10 @@ export class ReservationController {
     // La identidad sale del token: solo el dueño puede consultar su reserva
     res.status(200).json(await this.reservationService.getForOwner(req.auth!.userId, id));
   };
+
+  cancel = async (req: Request, res: Response): Promise<void> => {
+    const { id } = res.locals.params as ReservationIdParams;
+    // La identidad sale del token: solo el dueño puede cancelar su reserva
+    res.status(200).json(await this.reservationService.cancelByOwner(req.auth!.userId, id));
+  };
 }

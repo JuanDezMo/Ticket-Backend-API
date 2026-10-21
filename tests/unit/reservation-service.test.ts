@@ -41,14 +41,20 @@ function setup(
     reserved?: boolean;
     found?: Found | null;
     seatById?: Seat | null;
+    locked?: Found['reservation'] | null;
+    cancelled?: boolean;
   } = {},
 ) {
-  const events = { getById: vi.fn().mockResolvedValue(overrides.event ?? event) };
+  const events = {
+    getById: vi.fn().mockResolvedValue(overrides.event ?? event),
+    findForShare: vi.fn().mockResolvedValue(overrides.event ?? event),
+  };
   const seats = {
     findByEventAndLabel: vi
       .fn()
       .mockResolvedValue(overrides.seat === undefined ? seat : overrides.seat),
     markReserved: vi.fn().mockResolvedValue(overrides.reserved ?? true),
+    releaseReserved: vi.fn().mockResolvedValue(true),
     findById: vi
       .fn()
       .mockResolvedValue(overrides.seatById === undefined ? seat : overrides.seatById),
@@ -57,12 +63,14 @@ function setup(
     releaseExpired: vi.fn().mockResolvedValue(0),
     cancelActiveByEvent: vi.fn().mockResolvedValue(0),
     findForPurchase: vi.fn().mockResolvedValue(overrides.found ?? null),
-    lockById: vi.fn().mockResolvedValue(null),
+    lockById: vi.fn().mockResolvedValue(overrides.locked === undefined ? null : overrides.locked),
     markConfirmed: vi.fn().mockResolvedValue(true),
+    markCancelledByUser: vi.fn().mockResolvedValue(overrides.cancelled ?? true),
     create: vi.fn().mockResolvedValue(stored),
   } satisfies ReservationRepository;
   const trx = {};
-  const db = { transaction: () => ({ execute: (cb: (t: unknown) => unknown) => cb(trx) }) };
+  const transaction = vi.fn(() => ({ execute: (cb: (t: unknown) => unknown) => cb(trx) }));
+  const db = { transaction };
   const service = new ReservationService(
     repo,
     seats as never,
@@ -71,7 +79,7 @@ function setup(
     10,
     () => NOW,
   );
-  return { service, events, seats, repo, trx };
+  return { service, events, seats, repo, trx, transaction };
 }
 
 describe('ReservationService.create', () => {
@@ -205,5 +213,78 @@ describe('ReservationService.getForOwner', () => {
     expect(error).not.toBeInstanceOf(AppError);
     expect((error as Error).message).toBe('Seat seat-1 not found for reservation res-1');
     expectNoWrites(ctx);
+  });
+});
+
+describe('ReservationService.cancelByOwner', () => {
+  const active = { ...stored, status: 'ACTIVE' };
+  const cancelSetup = (status = 'ACTIVE', extra: Parameters<typeof setup>[0] = {}) =>
+    setup({
+      found: { reservation: active, expired: false },
+      locked: { ...stored, status },
+      ...extra,
+    });
+
+  it('cancels an ACTIVE reservation, releases the seat and returns CANCELLED_BY_USER', async () => {
+    const { service, repo, seats, trx } = cancelSetup();
+    const result = await service.cancelByOwner('user-1', 'res-1');
+    expect(result).toMatchObject({ id: 'res-1', seat: 'C7', status: 'CANCELLED_BY_USER' });
+    expect(repo.markCancelledByUser).toHaveBeenCalledWith('res-1', trx);
+    expect(seats.releaseReserved).toHaveBeenCalledWith('seat-1', trx);
+  });
+
+  it('locks the event before the reservation, inside the transaction', async () => {
+    const { service, events, repo, trx } = cancelSetup();
+    await service.cancelByOwner('user-1', 'res-1');
+    expect(events.findForShare).toHaveBeenCalledWith('event-1', trx);
+    expect(repo.lockById).toHaveBeenCalledWith('res-1', trx);
+    expect(events.findForShare.mock.invocationCallOrder[0]).toBeLessThan(
+      repo.lockById.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it.each([
+    ['CANCELLED_BY_USER', 'RESERVATION_ALREADY_CANCELLED'],
+    ['CONFIRMED', 'RESERVATION_ALREADY_CONFIRMED'],
+    ['CANCELLED', 'EVENT_CANCELLED'],
+    ['EXPIRED', 'RESERVATION_EXPIRED'],
+  ])('rejects a %s reservation with %s without releasing the seat', async (status, code) => {
+    const { service, repo, seats } = cancelSetup(status);
+    await expect(service.cancelByOwner('user-1', 'res-1')).rejects.toMatchObject({ code });
+    expect(repo.markCancelledByUser).not.toHaveBeenCalled();
+    expect(seats.releaseReserved).not.toHaveBeenCalled();
+  });
+
+  it('rejects with EVENT_CANCELLED when the event is no longer ACTIVE', async () => {
+    const { service, seats } = cancelSetup('ACTIVE', { event: { ...event, status: 'CANCELLED' } });
+    await expect(service.cancelByOwner('user-1', 'res-1')).rejects.toMatchObject({
+      code: 'EVENT_CANCELLED',
+    });
+    expect(seats.releaseReserved).not.toHaveBeenCalled();
+  });
+
+  it('rejects with RESERVATION_EXPIRED when the database clock says it expired', async () => {
+    const { service, seats } = cancelSetup('ACTIVE', { cancelled: false });
+    await expect(service.cancelByOwner('user-1', 'res-1')).rejects.toMatchObject({
+      code: 'RESERVATION_EXPIRED',
+    });
+    expect(seats.releaseReserved).not.toHaveBeenCalled();
+  });
+
+  it('rejects another user with FORBIDDEN without opening the transaction', async () => {
+    const { service, transaction, seats } = cancelSetup();
+    await expect(service.cancelByOwner('user-2', 'res-1')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(transaction).not.toHaveBeenCalled();
+    expect(seats.releaseReserved).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown reservation with RESERVATION_NOT_FOUND', async () => {
+    const { service, transaction } = setup({ found: null });
+    await expect(service.cancelByOwner('user-1', 'res-1')).rejects.toMatchObject({
+      code: 'RESERVATION_NOT_FOUND',
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

@@ -65,6 +65,9 @@ export class TicketService {
     // 4. Evento activo y reserva vigente (según la hora de la BD)
     const event = await this.events.getById(reservation.eventId);
     if (event.status !== EVENT_STATUSES.ACTIVE) throw new AppError('EVENT_CANCELLED');
+    if (reservation.status === RESERVATION_STATUSES.CANCELLED_BY_USER) {
+      throw new AppError('RESERVATION_ALREADY_CANCELLED');
+    }
     if (reservation.status !== RESERVATION_STATUSES.ACTIVE || expired) {
       throw new AppError('RESERVATION_EXPIRED');
     }
@@ -130,6 +133,11 @@ export class TicketService {
     if (!event || event.status !== EVENT_STATUSES.ACTIVE) {
       await this.payments.recordRefundPending(payment, trx);
       return { kind: 'refund', code: 'EVENT_CANCELLED' };
+    }
+    // El dueño canceló la reserva mientras se cobraba
+    if (locked?.status === RESERVATION_STATUSES.CANCELLED_BY_USER) {
+      await this.payments.recordRefundPending(payment, trx);
+      return { kind: 'refund', code: 'RESERVATION_ALREADY_CANCELLED' };
     }
     if (!locked || locked.status !== RESERVATION_STATUSES.ACTIVE) {
       await this.payments.recordRefundPending(payment, trx);

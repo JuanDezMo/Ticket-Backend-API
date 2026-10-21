@@ -15,6 +15,8 @@ export interface SeatRepository {
   blockAllByEvent(eventId: string, executor?: Db): Promise<number>;
   /** Pasa el seat a SOLD solo si está RESERVED. Devuelve false si no cambió nada. */
   markSold(seatId: string, executor?: Db): Promise<boolean>;
+  /** Devuelve el seat a AVAILABLE solo si está RESERVED (no deshace BLOCKED ni SOLD). */
+  releaseReserved(seatId: string, executor?: Db): Promise<boolean>;
   findById(id: string): Promise<Seat | null>;
 }
 
@@ -68,6 +70,16 @@ export class KyselySeatRepository implements SeatRepository {
     const result = await executor
       .updateTable('seats')
       .set({ status: SEAT_STATUSES.SOLD })
+      .where('id', '=', seatId)
+      .where('status', '=', SEAT_STATUSES.RESERVED)
+      .executeTakeFirst();
+    return result.numUpdatedRows > 0n;
+  }
+
+  async releaseReserved(seatId: string, executor: Db = this.db): Promise<boolean> {
+    const result = await executor
+      .updateTable('seats')
+      .set({ status: SEAT_STATUSES.AVAILABLE })
       .where('id', '=', seatId)
       .where('status', '=', SEAT_STATUSES.RESERVED)
       .executeTakeFirst();

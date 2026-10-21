@@ -33,6 +33,10 @@ export class SeatService {
     return this.seats.markSold(seatId, executor);
   }
 
+  releaseReserved(seatId: string, executor: Db): Promise<boolean> {
+    return this.seats.releaseReserved(seatId, executor);
+  }
+
   findById(id: string): Promise<Seat | null> {
     return this.seats.findById(id);
   }

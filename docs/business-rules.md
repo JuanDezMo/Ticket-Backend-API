@@ -37,6 +37,7 @@ Permisos:
 | Ver detalle de evento (también público) | x | x |
 | Reservar seat | | x |
 | Consultar mi reserva | | x |
+| Cancelar mi reserva | | x |
 | Comprar ticket | | x |
 | Ver mis tickets | | x |
 
@@ -88,6 +89,7 @@ La capacidad es paramétrica, así que el mapa de seats se genera con una regla 
 AVAILABLE --reservar--> RESERVED --pago aprobado--> SOLD
     ^                       |
     +--- TTL / cancelada ---+
+    (cancelada = el dueño cancela su reserva, RN-RES-9)
 
 Cualquier estado --evento cancelado--> BLOCKED
 ```
@@ -100,10 +102,11 @@ Cualquier estado --evento cancelado--> BLOCKED
 | RN-RES-2 | La reserva retiene el seat durante un TTL (por defecto 10 min, configurable). |
 | RN-RES-3 | Al vencer el TTL, la reserva pasa a `EXPIRED` y el seat vuelve a `AVAILABLE`, mediante la liberación descrita en RN-RES-6. |
 | RN-RES-4 | Reservar es atómico: dos usuarios no pueden reservar el mismo seat. |
-| RN-RES-5 | Estados: `ACTIVE`, `EXPIRED`, `CONFIRMED`, `CANCELLED`. |
+| RN-RES-5 | Estados: `ACTIVE`, `EXPIRED`, `CONFIRMED`, `CANCELLED` (se canceló el evento) y `CANCELLED_BY_USER` (la canceló su dueño). |
 | RN-RES-6 | La reserva guarda `expires_at` (creación + TTL) calculado con la hora de la BD. Las reservas vencidas se liberan en dos momentos: al listar seats disponibles o reservar en un evento, y por un job periódico (cada 60 s). Ambos usan la misma operación. |
 | RN-RES-7 | La compra siempre valida `expires_at > now()`; si no se cumple, responde `RESERVATION_EXPIRED`. La corrección no depende de que el job haya corrido. |
 | RN-RES-8 | Un USER puede consultar solo sus propias reservas; una reserva `ACTIVE` con `expires_at <= now()` se informa como `EXPIRED` sin modificarla. |
+| RN-RES-9 | El dueño puede cancelar su reserva `ACTIVE` y vigente con `POST /reservations/:id/cancel`. La reserva pasa a `CANCELLED_BY_USER` y el seat a `AVAILABLE` en una sola transacción. Si no se puede cancelar, se responde `409` con un código según el estado: `RESERVATION_ALREADY_CANCELLED`, `RESERVATION_ALREADY_CONFIRMED`, `RESERVATION_EXPIRED` o `EVENT_CANCELLED`. |
 
 ## 6. Compra de tickets
 
@@ -122,7 +125,7 @@ Cualquier estado --evento cancelado--> BLOCKED
 | RN-TKT-11 | `ticket-api` no reintenta automáticamente la llamada a la pasarela, sea cual sea la respuesta (incluidos `502` y timeout). El reintento lo inicia el usuario. Así no se altera el conteo de intentos de la pasarela (máximo 3 con error) ni se envían cobros duplicados. |
 | RN-TKT-12 | `card.brand` es obligatoria en la compra y debe ser `VISA`, `MASTERCARD` o `AMEX` (se acepta en minúscula y se envía en mayúscula). `ticket-api` la valida antes de llamar a la pasarela, sin llamada ni cobro si falla, y responde `400` con un mensaje específico según el caso: (a) campo ausente, vacío o nulo → `CARD_BRAND_REQUIRED`, "Card brand is required. Use VISA, MASTERCARD or AMEX"; (b) valor que no pertenece a la lista que maneja la pasarela → `CARD_BRAND_NOT_ALLOWED`, "Card brand not allowed. Use VISA, MASTERCARD or AMEX". Si la pasarela respondiera `BRAND_NOT_ALLOWED`, `ticket-api` lo traduce al mismo `CARD_BRAND_NOT_ALLOWED`. |
 | RN-TKT-13 | Repetir la compra de una reserva que ya tiene ticket devuelve el mismo ticket con `200` (sin nuevo cobro ni nuevo ticket); la primera emisión responde `201`. |
-| RN-TKT-14 | Si tras aprobarse el cobro el evento fue cancelado o la reserva dejó de estar activa, no se emite el ticket, se responde `409` (`EVENT_CANCELLED` o `RESERVATION_EXPIRED`) y el pago queda registrado como `REFUND_PENDING`. Lo mismo ocurre si falla de forma inesperada la emisión. |
+| RN-TKT-14 | Si tras aprobarse el cobro el evento fue cancelado o la reserva dejó de estar activa, no se emite el ticket, se responde `409` (`EVENT_CANCELLED`, `RESERVATION_ALREADY_CANCELLED` si el dueño la canceló, o `RESERVATION_EXPIRED`) y el pago queda registrado como `REFUND_PENDING`. Lo mismo ocurre si falla de forma inesperada la emisión. |
 
 ## 7. Cancelación de eventos
 

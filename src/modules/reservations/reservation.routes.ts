@@ -25,5 +25,12 @@ export function createReservationRoutes(
     validate(reservationIdParamsSchema, 'params'),
     controller.getById,
   );
+  router.post(
+    '/:id/cancel',
+    authenticate,
+    requireRole(ROLES.USER),
+    validate(reservationIdParamsSchema, 'params'),
+    controller.cancel,
+  );
   return router;
 }

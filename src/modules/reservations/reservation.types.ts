@@ -3,6 +3,7 @@ export const RESERVATION_STATUSES = {
   EXPIRED: 'EXPIRED',
   CONFIRMED: 'CONFIRMED',
   CANCELLED: 'CANCELLED',
+  CANCELLED_BY_USER: 'CANCELLED_BY_USER',
 } as const;
 
 export type ReservationStatus = (typeof RESERVATION_STATUSES)[keyof typeof RESERVATION_STATUSES];

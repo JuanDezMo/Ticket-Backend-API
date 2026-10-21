@@ -77,5 +77,14 @@ describe('reservations end to end', () => {
     const second = await reserve(luis, 'A1');
     expect(second.status).toBe(201);
     expect(await available()).toBe(19);
+
+    // luis se arrepiente: cancela, el seat se libera al instante y ana lo vuelve a reservar
+    const cancelled = await request(ctx.app)
+      .post(`/reservations/${second.body.id}/cancel`)
+      .set(...bearer(luis));
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.status).toBe('CANCELLED_BY_USER');
+    expect(await available()).toBe(20);
+    expect((await reserve(ana, 'A1')).status).toBe(201);
   });
 });

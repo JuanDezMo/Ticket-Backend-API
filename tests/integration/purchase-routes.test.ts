@@ -217,6 +217,17 @@ describe('POST /tickets/purchase', () => {
       },
     );
 
+    it('returns 409 RESERVATION_ALREADY_CANCELLED for a reservation cancelled by its owner', async () => {
+      const { token, reservation } = await reserveSeat(ctx.app, ctx.db);
+      await request(ctx.app)
+        .post(`/reservations/${reservation.id}/cancel`)
+        .set(...bearer(token));
+      const res = await purchase(token, purchaseBody(reservation.id));
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('RESERVATION_ALREADY_CANCELLED');
+      expect(gateway.calls).toHaveLength(0);
+    });
+
     it('returns 409 EVENT_CANCELLED for a cancelled event, even if its reservation was cancelled too', async () => {
       const { token, eventId, reservation } = await reserveSeat(ctx.app, ctx.db);
       const admin = (await createUserAndLogin(ctx.app, ctx.db, 'ADMIN')).token;
@@ -338,6 +349,26 @@ describe('POST /tickets/purchase', () => {
         transaction_id: gatewayExamples.approved.transactionId,
       });
       expect(await seatStatus(reservation.seatId)).toBe('RESERVED');
+    });
+
+    it('answers RESERVATION_ALREADY_CANCELLED and records REFUND_PENDING when the owner cancels while paying', async () => {
+      const { token, reservation } = await reserveSeat(ctx.app, ctx.db);
+      gateway.respondWith(async () => {
+        const cancelled = await request(ctx.app)
+          .post(`/reservations/${reservation.id}/cancel`)
+          .set(...bearer(token));
+        expect(cancelled.status).toBe(200);
+        return HttpResponse.json(gatewayExamples.approved);
+      });
+      const res = await purchase(token, purchaseBody(reservation.id));
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('RESERVATION_ALREADY_CANCELLED');
+      expect(await count('tickets')).toBe(0);
+      const payment = await ctx.db.selectFrom('payments').selectAll().executeTakeFirstOrThrow();
+      expect(payment.status).toBe('REFUND_PENDING');
+      expect(await reservationStatus(reservation.id)).toBe('CANCELLED_BY_USER');
+      expect(await seatStatus(reservation.seatId)).toBe('AVAILABLE');
     });
 
     it('answers RESERVATION_EXPIRED and records REFUND_PENDING when the reservation is released while paying', async () => {

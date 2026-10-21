@@ -21,6 +21,8 @@ export const ERROR_DEFINITIONS = {
   EVENT_ALREADY_ENDED: { status: 409, message: 'Event has already ended' },
   EVENT_NOT_ACTIVE: { status: 409, message: 'Event is not active or has already started' },
   RESERVATION_EXPIRED: { status: 409, message: 'Reservation has expired or is no longer active' },
+  RESERVATION_ALREADY_CANCELLED: { status: 409, message: 'Reservation has already been cancelled' },
+  RESERVATION_ALREADY_CONFIRMED: { status: 409, message: 'Reservation has already been paid' },
   EVENT_CANCELLED: { status: 409, message: 'Event has been cancelled' },
   PAYMENT_REJECTED: { status: 402, message: 'Payment was rejected. Try another card' },
   CARD_PROBLEM: { status: 422, message: 'The card has problems, use another payment method' },

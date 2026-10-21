@@ -22,6 +22,11 @@ export interface ReservationRepository {
   lockById(id: string, executor: Db): Promise<Reservation | null>;
   /** ACTIVE -> CONFIRMED. Devuelve false si la reserva ya no estaba ACTIVE. */
   markConfirmed(id: string, executor: Db): Promise<boolean>;
+  /**
+   * ACTIVE y vigente -> CANCELLED_BY_USER. El vencimiento se decide con la hora de la BD en el
+   * mismo UPDATE. Devuelve false si la reserva ya no estaba ACTIVE o ya venció.
+   */
+  markCancelledByUser(id: string, executor: Db): Promise<boolean>;
 }
 
 function toReservation(row: Selectable<Reservations>): Reservation {
@@ -81,6 +86,17 @@ export class KyselyReservationRepository implements ReservationRepository {
       .set({ status: RESERVATION_STATUSES.CONFIRMED })
       .where('id', '=', id)
       .where('status', '=', RESERVATION_STATUSES.ACTIVE)
+      .executeTakeFirst();
+    return result.numUpdatedRows > 0n;
+  }
+
+  async markCancelledByUser(id: string, executor: Db): Promise<boolean> {
+    const result = await executor
+      .updateTable('reservations')
+      .set({ status: RESERVATION_STATUSES.CANCELLED_BY_USER })
+      .where('id', '=', id)
+      .where('status', '=', RESERVATION_STATUSES.ACTIVE)
+      .where(sql<boolean>`expires_at > now()`)
       .executeTakeFirst();
     return result.numUpdatedRows > 0n;
   }

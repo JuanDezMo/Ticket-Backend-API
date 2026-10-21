@@ -207,6 +207,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `POST /events/:id/cancel` (ADMIN) | 200 | 400 (id inválido), 401, 403, 404 `EVENT_NOT_FOUND`, 409 `EVENT_ALREADY_CANCELLED` o `EVENT_ALREADY_ENDED` |
 | `POST /reservations` (USER) | 201 | 400 (`eventId` o `seat` ausentes o inválidos), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `SEAT_NOT_AVAILABLE` o `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado) |
 | `GET /reservations/:id` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND` |
+| `POST /reservations/:id/cancel` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND`, 409 `RESERVATION_ALREADY_CANCELLED`, `RESERVATION_ALREADY_CONFIRMED`, `RESERVATION_EXPIRED` o `EVENT_CANCELLED` |
 | `POST /tickets/purchase` (USER) | 201 al emitir; 200 si la reserva ya tenía ticket (mismo ticket, sin nuevo cobro) | ver tabla siguiente |
 | `GET /tickets/me` (USER) | 200 | 400 (paginación inválida), 401, 403 |
 
@@ -221,6 +222,7 @@ Compra (`POST /tickets/purchase`):
 | No es el dueño de la reserva | 403 | `FORBIDDEN` |
 | Reserva no encontrada | 404 | `RESERVATION_NOT_FOUND` |
 | Reserva vencida o no activa | 409 | `RESERVATION_EXPIRED` |
+| Reserva cancelada por su dueño (antes o durante el pago) | 409 | `RESERVATION_ALREADY_CANCELLED` |
 | Evento cancelado | 409 | `EVENT_CANCELLED` |
 | Pago rechazado | 402 | `PAYMENT_REJECTED` |
 | Tarjeta con problemas | 422 | `CARD_PROBLEM` |
@@ -228,7 +230,7 @@ Compra (`POST /tickets/purchase`):
 | Timeout hacia la pasarela | 504 | `PAYMENT_GATEWAY_TIMEOUT` |
 | API key rechazada por la pasarela (error de configuración) | 500 | `INTERNAL_ERROR`, mensaje genérico |
 
-Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAUTHORIZED` (401), `INVALID_CREDENTIALS` (401), `EMAIL_ALREADY_EXISTS` (409), `EVENT_NOT_FOUND` y `SEAT_NOT_FOUND` (404), `SEAT_NOT_AVAILABLE` (409), `EVENT_NOT_ACTIVE` (409), `EVENT_ALREADY_CANCELLED` y `EVENT_ALREADY_ENDED` (409).
+Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAUTHORIZED` (401), `INVALID_CREDENTIALS` (401), `EMAIL_ALREADY_EXISTS` (409), `EVENT_NOT_FOUND` y `SEAT_NOT_FOUND` (404), `SEAT_NOT_AVAILABLE` (409), `EVENT_NOT_ACTIVE` (409), `EVENT_ALREADY_CANCELLED` y `EVENT_ALREADY_ENDED` (409), `RESERVATION_ALREADY_CANCELLED` y `RESERVATION_ALREADY_CONFIRMED` (409).
 
 ### 11.3 Cuerpos de las respuestas exitosas
 
@@ -281,7 +283,9 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 }
 ```
 
-**`GET /reservations/:id`** → 200 con el mismo cuerpo que `POST /reservations`. `status` es el estado efectivo: una reserva `ACTIVE` vencida según la hora de la BD se devuelve como `EXPIRED`, aunque el job todavía no la haya liberado; la consulta no modifica datos (RN-RES-8).
+**`GET /reservations/:id`** → 200 con el mismo cuerpo que `POST /reservations`. `status` es el estado efectivo: una reserva `ACTIVE` vencida según la hora de la BD se devuelve como `EXPIRED`, aunque el job todavía no la haya liberado; la consulta no modifica datos (RN-RES-8). También puede devolver `CANCELLED_BY_USER`.
+
+**`POST /reservations/:id/cancel`** → 200 con el mismo cuerpo que `POST /reservations` y `status` `CANCELLED_BY_USER`; el seat vuelve a `AVAILABLE` (RN-RES-9).
 
 **`POST /tickets/purchase`** → 201 (200 con el mismo cuerpo si la reserva ya tenía ticket)
 

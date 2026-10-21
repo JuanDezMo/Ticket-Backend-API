@@ -95,6 +95,48 @@ export class ReservationService {
     return toPublicReservation({ ...reservation, status }, `${seat.row}${seat.number}`);
   }
 
+  async cancelByOwner(userId: string, id: string): Promise<PublicReservation> {
+    // 1. Existencia y dueño, antes de abrir la transacción y de revelar cualquier otro dato
+    const found = await this.reservations.findForPurchase(id);
+    if (!found) throw new AppError('RESERVATION_NOT_FOUND');
+    if (found.reservation.userId !== userId) throw new AppError('FORBIDDEN');
+
+    // 2. Bloqueos en orden evento -> reserva -> seat, igual que la compra. La cancelación del
+    // evento hace UPDATE del evento antes de tocar seats y reservas, así que FOR SHARE espera
+    // a que termine y las dos quedan en fila: no hay interbloqueo.
+    const cancelled = await this.db.transaction().execute(async (trx) => {
+      const event = await this.events.findForShare(found.reservation.eventId, trx);
+      const locked = await this.reservations.lockById(id, trx);
+      if (!locked) throw new AppError('RESERVATION_NOT_FOUND');
+
+      switch (locked.status) {
+        case RESERVATION_STATUSES.CANCELLED_BY_USER:
+          throw new AppError('RESERVATION_ALREADY_CANCELLED');
+        case RESERVATION_STATUSES.CONFIRMED:
+          throw new AppError('RESERVATION_ALREADY_CONFIRMED');
+        case RESERVATION_STATUSES.CANCELLED:
+          throw new AppError('EVENT_CANCELLED');
+        case RESERVATION_STATUSES.EXPIRED:
+          throw new AppError('RESERVATION_EXPIRED');
+      }
+      if (!event || event.status !== EVENT_STATUSES.ACTIVE) throw new AppError('EVENT_CANCELLED');
+
+      // El UPDATE solo cambia una reserva vigente según la hora de la BD (RN-RES-7)
+      if (!(await this.reservations.markCancelledByUser(id, trx))) {
+        throw new AppError('RESERVATION_EXPIRED');
+      }
+      await this.seats.releaseReserved(locked.seatId, trx);
+      return { ...locked, status: RESERVATION_STATUSES.CANCELLED_BY_USER };
+    });
+
+    const seat = await this.seats.findById(cancelled.seatId);
+    // Igual que en getForOwner: inesperado por la clave foránea, el errorHandler lo registra
+    if (!seat) {
+      throw new Error(`Seat ${cancelled.seatId} not found for reservation ${cancelled.id}`);
+    }
+    return toPublicReservation(cancelled, `${seat.row}${seat.number}`);
+  }
+
   findForPurchase(id: string) {
     return this.reservations.findForPurchase(id);
   }

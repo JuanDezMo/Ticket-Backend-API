@@ -197,6 +197,14 @@ describe('TicketService.purchase', () => {
     expect(payments.charge).not.toHaveBeenCalled();
   });
 
+  it('answers RESERVATION_ALREADY_CANCELLED for a reservation cancelled by its owner, without charging', async () => {
+    const { service, payments } = setup({ reservation: { status: 'CANCELLED_BY_USER' } });
+    await expect(service.purchase('user-1', body())).rejects.toMatchObject({
+      code: 'RESERVATION_ALREADY_CANCELLED',
+    });
+    expect(payments.charge).not.toHaveBeenCalled();
+  });
+
   it('propagates a payment failure without touching the reservation, seat or tickets', async () => {
     const { service, payments, reservations, seats, tickets } = setup();
     payments.charge.mockRejectedValueOnce(new AppError('PAYMENT_REJECTED'));
@@ -244,6 +252,20 @@ describe('TicketService.purchase', () => {
       code: 'RESERVATION_EXPIRED',
     });
     expect(payments.recordRefundPending).toHaveBeenCalledOnce();
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it('records REFUND_PENDING and answers RESERVATION_ALREADY_CANCELLED when the owner cancelled during the payment', async () => {
+    const { service, payments, tickets, trx } = setup({
+      locked: { ...reservation, status: 'CANCELLED_BY_USER' },
+    });
+    await expect(service.purchase('user-1', body())).rejects.toMatchObject({
+      code: 'RESERVATION_ALREADY_CANCELLED',
+    });
+    expect(payments.recordRefundPending).toHaveBeenCalledWith(
+      expect.objectContaining({ transactionId: 'txn-1' }),
+      trx,
+    );
     expect(tickets.create).not.toHaveBeenCalled();
   });
 

@@ -11,6 +11,8 @@ describe('reservation and cancellation error codes', () => {
     ['CARD_BRAND_NOT_ALLOWED', 400, 'Card brand not allowed. Use VISA, MASTERCARD or AMEX'],
     ['RESERVATION_NOT_FOUND', 404, 'Reservation not found'],
     ['RESERVATION_EXPIRED', 409, 'Reservation has expired or is no longer active'],
+    ['RESERVATION_ALREADY_CANCELLED', 409, 'Reservation has already been cancelled'],
+    ['RESERVATION_ALREADY_CONFIRMED', 409, 'Reservation has already been paid'],
     ['EVENT_CANCELLED', 409, 'Event has been cancelled'],
     ['PAYMENT_REJECTED', 402, 'Payment was rejected. Try another card'],
     ['CARD_PROBLEM', 422, 'The card has problems, use another payment method'],

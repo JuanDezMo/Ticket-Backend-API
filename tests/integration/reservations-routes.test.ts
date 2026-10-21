@@ -330,3 +330,137 @@ describe('GET /reservations/:id', () => {
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 });
+
+describe('POST /reservations/:id/cancel', () => {
+  let ctx: TestContext;
+  let userToken: string;
+  let userId: string;
+  let otherToken: string;
+  let adminToken: string;
+  let eventId: string;
+
+  beforeAll(async () => {
+    ctx = await createTestContext();
+  });
+  afterAll(async () => {
+    await ctx.close();
+  });
+  beforeEach(async () => {
+    await ctx.reset();
+    ({ token: userToken, userId } = await createUserAndLogin(ctx.app, ctx.db, 'USER'));
+    otherToken = (await createUserAndLogin(ctx.app, ctx.db, 'USER', 'other@mail.com')).token;
+    adminToken = (await createUserAndLogin(ctx.app, ctx.db, 'ADMIN')).token;
+    eventId = (await insertEventWithSeats(ctx.db, { capacity: 20, price: 150000 })).id;
+  });
+
+  const reserve = (token: string, seat = 'B3') =>
+    request(ctx.app)
+      .post('/reservations')
+      .set(...bearer(token))
+      .send({ eventId, seat });
+  const cancel = (token: string | null, id: string) => {
+    const req = request(ctx.app).post(`/reservations/${id}/cancel`);
+    if (token) req.set(...bearer(token));
+    return req;
+  };
+  const seatStatus = async () => (await seatOf(ctx.db, eventId, 'B', 3)).status;
+  const storedStatus = async (id: string) =>
+    (
+      await ctx.db
+        .selectFrom('reservations')
+        .select('status')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    ).status;
+
+  it('cancels the reservation and releases the seat', async () => {
+    const created = await reserve(userToken);
+    const res = await cancel(userToken, created.body.id);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ...created.body, status: 'CANCELLED_BY_USER' });
+    expect(await seatStatus()).toBe('AVAILABLE');
+
+    const detail = await request(ctx.app)
+      .get(`/reservations/${created.body.id}`)
+      .set(...bearer(userToken));
+    expect(detail.body.status).toBe('CANCELLED_BY_USER');
+  });
+
+  it('lets another user reserve the released seat', async () => {
+    const created = await reserve(userToken);
+    await cancel(userToken, created.body.id);
+    const again = await reserve(otherToken);
+    expect(again.status).toBe(201);
+    expect(await seatStatus()).toBe('RESERVED');
+  });
+
+  it('answers 409 RESERVATION_ALREADY_CANCELLED when cancelling twice', async () => {
+    const created = await reserve(userToken);
+    await cancel(userToken, created.body.id);
+    const res = await cancel(userToken, created.body.id);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('RESERVATION_ALREADY_CANCELLED');
+  });
+
+  it('answers 409 RESERVATION_ALREADY_CONFIRMED for a paid reservation', async () => {
+    const seat = await seatOf(ctx.db, eventId, 'B', 3);
+    const reservation = await insertReservation(ctx.db, {
+      userId,
+      eventId,
+      seatId: seat.id,
+      status: 'CONFIRMED',
+      seatStatus: 'SOLD',
+    });
+    const res = await cancel(userToken, reservation.id);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('RESERVATION_ALREADY_CONFIRMED');
+    expect(await seatStatus()).toBe('SOLD');
+  });
+
+  it('answers 409 EVENT_CANCELLED after the event is cancelled', async () => {
+    const created = await reserve(userToken);
+    await request(ctx.app)
+      .post(`/events/${eventId}/cancel`)
+      .set(...bearer(adminToken));
+    const res = await cancel(userToken, created.body.id);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('EVENT_CANCELLED');
+    expect(await seatStatus()).toBe('BLOCKED');
+  });
+
+  it('answers 409 RESERVATION_EXPIRED for an expired reservation and changes nothing', async () => {
+    const created = await reserve(userToken);
+    await expireReservations(ctx.db);
+    const res = await cancel(userToken, created.body.id);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('RESERVATION_EXPIRED');
+    expect(await storedStatus(created.body.id)).toBe('ACTIVE');
+    expect(await seatStatus()).toBe('RESERVED');
+  });
+
+  it("rejects another user's reservation with 403 and changes nothing", async () => {
+    const created = await reserve(otherToken);
+    const res = await cancel(userToken, created.body.id);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+    expect(await storedStatus(created.body.id)).toBe('ACTIVE');
+    expect(await seatStatus()).toBe('RESERVED');
+  });
+
+  it('rejects an ADMIN (403) and requires a token (401)', async () => {
+    const created = await reserve(userToken);
+    expect((await cancel(adminToken, created.body.id)).status).toBe(403);
+    const anonymous = await cancel(null, created.body.id);
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.body.code).toBe('UNAUTHORIZED');
+  });
+
+  it('answers 404 for an unknown id and 400 for an invalid one', async () => {
+    const unknown = await cancel(userToken, crypto.randomUUID());
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe('RESERVATION_NOT_FOUND');
+    const invalid = await cancel(userToken, 'abc');
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.code).toBe('VALIDATION_ERROR');
+  });
+});

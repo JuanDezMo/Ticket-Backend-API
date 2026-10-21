@@ -80,6 +80,7 @@ La suite automática (`pnpm test`) no necesita la pasarela. Para validar la inte
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
 | `GET /events/:id` | Público | Detalle de un evento (incluye cancelados) |
 | `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
+| `POST /reservations/:id/cancel` | USER | Cancela una reserva propia vigente y libera el seat (`CANCELLED_BY_USER`) |
 | `GET /reservations/:id` | USER | Consulta una reserva propia con su estado efectivo (`EXPIRED` si ya venció) |
 | `POST /events/:id/cancel` | ADMIN | Cancela el evento (no lo elimina): seats a `BLOCKED` y reservas `ACTIVE` a `CANCELLED`. Devuelve `{ id, status, cancelledReservations, cancelledTickets }` |
 | `POST /tickets/purchase` | USER | Paga una reserva y emite el ticket. Body: `reservationId` y `card` (`brand`, `number`, `expiry`, `cvv`). `201` al emitir; `200` con el mismo ticket si la reserva ya estaba pagada |
