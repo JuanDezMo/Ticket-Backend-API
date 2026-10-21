@@ -5,6 +5,7 @@ export const ERROR_DEFINITIONS = {
   INVALID_CREDENTIALS: { status: 401, message: 'Invalid email or password' },
   FORBIDDEN: { status: 403, message: 'You do not have permission to perform this action' },
   NOT_FOUND: { status: 404, message: 'Resource not found' },
+  EVENT_NOT_FOUND: { status: 404, message: 'Event not found' },
   EMAIL_ALREADY_EXISTS: { status: 409, message: 'Email already exists' },
   INTERNAL_ERROR: { status: 500, message: 'Internal server error' },
 } as const;

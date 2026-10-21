@@ -167,7 +167,7 @@ Cada 60s -> releaseExpired()
 |---|---|---|
 | Unitarias | Services con repositories y pasarela simulados | Vitest |
 | Integración | Rutas, repositories, transacciones e índices contra PostgreSQL real | Vitest, supertest, Testcontainers PostgreSQL |
-| Pasarela simulada | Respuestas 200, 402, 422, 502, 400, 401 y timeout | MSW |
+| Pasarela simulada | Respuestas 200, 402, 422, 502, 400, 401 y timeout. Los handlers de MSW parten de los ejemplos del contrato `openapi.json` de la pasarela | MSW (única herramienta de mock) |
 | Arquitectura | Que las capas y los módulos respeten las dependencias | dependency-cruiser |
 
 Reglas que hace cumplir `dependency-cruiser`:
@@ -211,7 +211,9 @@ Compra (`POST /tickets/purchase`):
 | Caso | HTTP | `code` |
 |---|---|---|
 | Ticket emitido | 201 | |
-| Datos de tarjeta inválidos (400 de la pasarela) | 400 | `VALIDATION_ERROR` |
+| `card.brand` ausente, vacío o nulo | 400 | `CARD_BRAND_REQUIRED`: "Card brand is required. Use VISA, MASTERCARD or AMEX" |
+| `card.brand` fuera de `VISA`, `MASTERCARD`, `AMEX` | 400 | `CARD_BRAND_NOT_ALLOWED`: "Card brand not allowed. Use VISA, MASTERCARD or AMEX" |
+| Otros datos de tarjeta inválidos (400 de la pasarela) | 400 | `VALIDATION_ERROR` |
 | No es el dueño de la reserva | 403 | `FORBIDDEN` |
 | Reserva no encontrada | 404 | `RESERVATION_NOT_FOUND` |
 | Reserva vencida o no activa | 409 | `RESERVATION_EXPIRED` |
@@ -222,7 +224,7 @@ Compra (`POST /tickets/purchase`):
 | Timeout hacia la pasarela | 504 | `PAYMENT_GATEWAY_TIMEOUT` |
 | API key rechazada por la pasarela (error de configuración) | 500 | `INTERNAL_ERROR`, mensaje genérico |
 
-Otros `ErrorCode`: `UNAUTHORIZED` (401), `INVALID_CREDENTIALS` (401), `EMAIL_ALREADY_EXISTS` (409), `EVENT_NOT_FOUND` y `SEAT_NOT_FOUND` (404), `SEAT_NOT_AVAILABLE` (409), `EVENT_NOT_ACTIVE` (409), `EVENT_ALREADY_CANCELLED` y `EVENT_ALREADY_ENDED` (409).
+Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAUTHORIZED` (401), `INVALID_CREDENTIALS` (401), `EMAIL_ALREADY_EXISTS` (409), `EVENT_NOT_FOUND` y `SEAT_NOT_FOUND` (404), `SEAT_NOT_AVAILABLE` (409), `EVENT_NOT_ACTIVE` (409), `EVENT_ALREADY_CANCELLED` y `EVENT_ALREADY_ENDED` (409).
 
 ### 11.3 Cuerpos de las respuestas exitosas
 
@@ -277,7 +279,7 @@ Otros `ErrorCode`: `UNAUTHORIZED` (401), `INVALID_CREDENTIALS` (401), `EMAIL_ALR
 
 **`POST /tickets/purchase`** → 201
 
-Solicitud: `{ "reservationId": "uuid", "card": { "brand": "VISA", "number": "...", "expiry": "12/28", "cvv": "123" } }`
+Solicitud: `{ "reservationId": "uuid", "card": { "brand": "VISA", "number": "...", "expiry": "12/28", "cvv": "123" } }`. `card.brand` es obligatoria (`VISA`, `MASTERCARD` o `AMEX`); si falta o no es válida, `ticket-api` responde `400` sin llamar a la pasarela, con un código y un mensaje específicos (ver la tabla de la compra).
 ```json
 {
   "id": "uuid", "reservationId": "uuid", "eventId": "uuid", "seat": "C7",

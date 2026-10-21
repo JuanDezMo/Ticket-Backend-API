@@ -12,6 +12,12 @@ import { AdminSeeder } from './modules/users/admin-seeder.js';
 import { UserController } from './modules/users/user.controller.js';
 import { KyselyUserRepository } from './modules/users/user.repository.js';
 import { UserService } from './modules/users/user.service.js';
+import { EventController } from './modules/events/event.controller.js';
+import { KyselyEventRepository } from './modules/events/event.repository.js';
+import { EventService } from './modules/events/event.service.js';
+import { SeatController } from './modules/seats/seat.controller.js';
+import { KyselySeatRepository } from './modules/seats/seat.repository.js';
+import { SeatService } from './modules/seats/seat.service.js';
 
 export interface ContainerOverrides {
   hasher?: PasswordHasher;
@@ -31,12 +37,16 @@ export function buildContainer(
 
   const userService = new UserService(new KyselyUserRepository(db), hasher);
   const authService = new AuthService(userService, hasher, tokens);
+  const seatService = new SeatService(new KyselySeatRepository(db));
+  const eventService = new EventService(new KyselyEventRepository(db), seatService, db);
 
   return {
     logger,
     authenticate: authenticate(tokens),
     authController: new AuthController(authService),
     userController: new UserController(userService),
+    eventController: new EventController(eventService),
+    seatController: new SeatController(seatService, eventService),
     healthController: new HealthController(new HealthService(db)),
     adminSeeder: new AdminSeeder(
       userService,

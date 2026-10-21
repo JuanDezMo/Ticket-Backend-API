@@ -9,7 +9,31 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
   : ColumnType<T, T | undefined, T>;
 
+export type Numeric = ColumnType<string, number | string, number | string>;
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface Events {
+  capacity: number;
+  created_at: Generated<Timestamp>;
+  description: string;
+  end_date: Timestamp;
+  id: Generated<string>;
+  name: string;
+  price: Numeric;
+  start_date: Timestamp;
+  status: Generated<string>;
+  type: string;
+  venue: string;
+}
+
+export interface Seats {
+  event_id: string;
+  id: Generated<string>;
+  number: number;
+  row: string;
+  status: Generated<string>;
+}
 
 export interface Users {
   created_at: Generated<Timestamp>;
@@ -20,5 +44,7 @@ export interface Users {
 }
 
 export interface DB {
+  events: Events;
+  seats: Seats;
   users: Users;
 }

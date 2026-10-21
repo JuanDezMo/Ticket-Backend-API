@@ -116,6 +116,7 @@ Cualquier estado --evento cancelado--> BLOCKED
 | RN-TKT-8 | La llamada a la pasarela tiene un timeout de 5 s (`PAYMENT_GATEWAY_TIMEOUT_MS`, configurable). Si lo supera, no se emite ticket y la reserva sigue `ACTIVE`. Reintentar es seguro: si la pasarela alcanzó a aprobar, el reintento devuelve el mismo `APPROVED` sin cobrar de nuevo. |
 | RN-TKT-9 | Al aprobarse el pago, el ticket guarda `transactionId` y `amount`. El `amount` lo calcula `ticket-api` con el precio del evento; nunca se toma del cliente. |
 | RN-TKT-10 | `ticket-api` reenvía los datos de la tarjeta (`brand`, `number`, `expiry`, `cvv`) a la pasarela y no los guarda ni los registra en logs. |
+| RN-TKT-12 | `card.brand` es obligatoria en la compra y debe ser `VISA`, `MASTERCARD` o `AMEX`. `ticket-api` la valida antes de llamar a la pasarela, sin llamada ni cobro si falla, y responde `400` con un mensaje específico según el caso: (a) campo ausente, vacío o nulo → `CARD_BRAND_REQUIRED`, "Card brand is required. Use VISA, MASTERCARD or AMEX"; (b) valor que no pertenece a la lista que maneja la pasarela → `CARD_BRAND_NOT_ALLOWED`, "Card brand not allowed. Use VISA, MASTERCARD or AMEX". Si la pasarela respondiera `BRAND_NOT_ALLOWED`, `ticket-api` lo traduce al mismo `CARD_BRAND_NOT_ALLOWED`. |
 | RN-TKT-11 | `ticket-api` no reintenta automáticamente la llamada a la pasarela, sea cual sea la respuesta (incluidos `502` y timeout). El reintento lo inicia el usuario. Así no se altera el conteo de intentos de la pasarela (máximo 3 con error) ni se envían cobros duplicados. |
 
 ## 7. Cancelación de eventos
@@ -162,7 +163,7 @@ Solicitud:
 }
 ```
 
-`card.brand` es la franquicia. Valores permitidos: `VISA`, `MASTERCARD`, `AMEX`. `ticket-api` la solicita al usuario junto con los demás datos de la tarjeta y la reenvía.
+`card.brand` es la franquicia y **`ticket-api` siempre la envía** (RN-TKT-12). Valores permitidos: `VISA`, `MASTERCARD`, `AMEX`. `ticket-api` la solicita al usuario junto con los demás datos de la tarjeta, la valida y la reenvía. El contrato OpenAPI de la pasarela la marca como opcional, pero para `ticket-api` es obligatoria.
 
 El request no incluye número de intento: la pasarela lo calcula (8.3).
 

@@ -1,7 +1,7 @@
 # ticket-api
 
 Backend de la plataforma de tickets (eventos, seats, reservas y compra de tickets).
-Este README cubre el estado del cambio `auth-users`: base del proyecto, registro, login y administración de usuarios.
+Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) y `events-seats` (eventos y seats).
 
 Documentación de referencia: `docs/business-rules.md` (reglas de negocio) y `docs/architecture.md` (arquitectura y contrato de la API).
 
@@ -65,8 +65,20 @@ ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente
 | `POST /auth/register` | Público | Crea un usuario `USER`. Body: `email`, `password` (mínimo 8). No acepta `role` |
 | `POST /auth/login` | Público | Devuelve `accessToken`, `tokenType` y `expiresIn` |
 | `POST /users` | ADMIN | Crea un usuario `USER` o `ADMIN`. Body: `email`, `password`, `role` |
+| `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
+| `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
+| `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
+| `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
+| `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
+| `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
 
 Errores con el formato `{ "code": "...", "message": "..." }`.
+
+Los seats se generan en filas de 10 puestos desde la `A`: un evento de 25 puestos tiene `A1..A10`, `B1..B10` y `C1..C5`.
+Un `pageSize` mayor a 20 (o menor a 1) responde `400`; no se recorta.
+
+Los seats se generan en filas de 10 puestos desde la `A`: un evento de 25 puestos tiene `A1..A10`, `B1..B10` y `C1..C5`.
+`pageSize` mayor a 20 (o menor a 1) responde `400`; no se recorta.
 
 ### Ejemplo con curl
 
@@ -82,4 +94,32 @@ curl -X POST localhost:3000/users -H "Authorization: Bearer $TOKEN" -H 'Content-
 # Registro público (siempre USER)
 curl -X POST localhost:3000/auth/register -H 'Content-Type: application/json' \
   -d '{"email":"ana@example.com","password":"password-123"}'
+```
+
+### Eventos y seats
+
+```bash
+# El ADMIN crea un evento de 25 puestos (las fechas deben ser futuras)
+curl -X POST localhost:3000/events -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Rock Night","description":"Concierto","type":"CONCERT","venue":"Main Hall","price":150000,"capacity":25,"startDate":"2027-01-15T20:00:00Z","endDate":"2027-01-15T23:00:00Z"}'
+
+# Listado público con filtros y paginación
+curl "localhost:3000/events?type=CONCERT&search=rock&page=1&pageSize=10"
+
+# Seats disponibles (requiere token; <EVENT_ID> es el id devuelto al crear el evento)
+curl "localhost:3000/events/<EVENT_ID>/seats?status=AVAILABLE" -H "Authorization: Bearer $TOKEN"
+```
+
+### Eventos y seats
+
+```bash
+# El ADMIN crea un evento de 25 puestos (las fechas deben ser futuras)
+curl -X POST localhost:3000/events -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Rock Night","description":"Concierto","type":"CONCERT","venue":"Main Hall","price":150000,"capacity":25,"startDate":"2027-01-15T20:00:00Z","endDate":"2027-01-15T23:00:00Z"}'
+
+# Listado público con filtros y paginación
+curl "localhost:3000/events?type=CONCERT&search=rock&page=1&pageSize=10"
+
+# Seats disponibles (requiere token; <EVENT_ID> es el id devuelto al crear el evento)
+curl "localhost:3000/events/<EVENT_ID>/seats?status=AVAILABLE" -H "Authorization: Bearer $TOKEN"
 ```
