@@ -27,6 +27,7 @@ async function main(): Promise<void> {
 
   const container = buildContainer(env, db, logger);
   await container.adminSeeder.seed();
+  container.reservationExpiryJob.start();
 
   const server = createApp(container).listen(env.PORT, () => {
     logger.info({ port: env.PORT }, 'ticket-api listening');
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'Shutting down');
+    container.reservationExpiryJob.stop();
     server.close(() => {
       void db.destroy().then(() => process.exit(0));
     });

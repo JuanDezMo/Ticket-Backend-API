@@ -27,6 +27,17 @@ export interface Events {
   venue: string;
 }
 
+export interface Reservations {
+  amount: Numeric;
+  created_at: Generated<Timestamp>;
+  event_id: string;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  seat_id: string;
+  status: Generated<string>;
+  user_id: string;
+}
+
 export interface Seats {
   event_id: string;
   id: Generated<string>;
@@ -45,6 +56,7 @@ export interface Users {
 
 export interface DB {
   events: Events;
+  reservations: Reservations;
   seats: Seats;
   users: Users;
 }

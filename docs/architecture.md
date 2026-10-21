@@ -180,7 +180,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 
 - `Dockerfile` multi-stage (build y runtime), con usuario no root.
 - `docker-compose.yml` con `postgres` (healthcheck y volumen) y `ticket-api` con `depends_on: service_healthy`.
-- Variables en `.env`, con `.env.example` versionado: `DATABASE_URL`, `JWT_SECRET`, `PAYMENT_GATEWAY_URL`, `PAYMENT_GATEWAY_API_KEY`, `PAYMENT_GATEWAY_TIMEOUT_MS`, `RESERVATION_TTL_MINUTES`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`.
+- Variables en `.env`, con `.env.example` versionado: `DATABASE_URL`, `JWT_SECRET`, `PAYMENT_GATEWAY_URL`, `PAYMENT_GATEWAY_API_KEY`, `PAYMENT_GATEWAY_TIMEOUT_MS`, `RESERVATION_TTL_MINUTES`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `RESERVATION_EXPIRY_INTERVAL_SECONDS`.
 
 ## 11. Contrato de la API de `ticket-api`
 
@@ -202,7 +202,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `POST /events` (ADMIN) | 201 | 400, 401, 403 |
 | `GET /events/:id/seats` | 200 | 401, 404 |
 | `POST /events/:id/cancel` (ADMIN) | 200 | 401, 403, 404, 409 ya cancelado o terminado |
-| `POST /reservations` (USER) | 201 | 400, 401, 403, 404 seat o evento, 409 seat no disponible o evento no activo |
+| `POST /reservations` (USER) | 201 | 400 (`eventId` o `seat` ausentes o inválidos), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `SEAT_NOT_AVAILABLE` o `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado) |
 | `POST /tickets/purchase` (USER) | 201 | ver tabla siguiente |
 | `GET /tickets/me` (USER) | 200 | 401, 403 |
 
@@ -268,7 +268,7 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 { "id": "uuid", "status": "CANCELLED", "cancelledReservations": 4, "cancelledTickets": 12 }
 ```
 
-**`POST /reservations`** → 201 (`amount` es el precio a pagar, calculado por el servidor, RN-TKT-9)
+**`POST /reservations`** → 201. Solicitud: `{ "eventId": "uuid", "seat": "C7" }` (la etiqueta `A`-`Z` + `1`-`10`, en minúscula también se acepta; el monto nunca se envía; `amount` es el precio a pagar, calculado por el servidor, RN-TKT-9)
 ```json
 {
   "id": "uuid", "eventId": "uuid", "seatId": "uuid", "seat": "C7",

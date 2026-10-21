@@ -37,4 +37,32 @@ describe('loadEnv', () => {
     expect(env.SEED_ADMIN_EMAIL).toBeUndefined();
     expect(env.SEED_ADMIN_PASSWORD).toBeUndefined();
   });
+
+  it('defaults the reservation TTL to 10 minutes and the expiry job to 60 seconds', () => {
+    const env = loadEnv(valid);
+    expect(env.RESERVATION_TTL_MINUTES).toBe(10);
+    expect(env.RESERVATION_EXPIRY_INTERVAL_SECONDS).toBe(60);
+  });
+
+  it('accepts custom reservation settings', () => {
+    const env = loadEnv({
+      ...valid,
+      RESERVATION_TTL_MINUTES: '3',
+      RESERVATION_EXPIRY_INTERVAL_SECONDS: '1',
+    });
+    expect(env.RESERVATION_TTL_MINUTES).toBe(3);
+    expect(env.RESERVATION_EXPIRY_INTERVAL_SECONDS).toBe(1);
+  });
+
+  it.each(['0', '-5', 'abc', '1.5'])('rejects reservation TTL %j', (value) => {
+    expect(() => loadEnv({ ...valid, RESERVATION_TTL_MINUTES: value })).toThrowError(
+      /RESERVATION_TTL_MINUTES/,
+    );
+  });
+
+  it.each(['0', 'abc'])('rejects expiry interval %j', (value) => {
+    expect(() => loadEnv({ ...valid, RESERVATION_EXPIRY_INTERVAL_SECONDS: value })).toThrowError(
+      /RESERVATION_EXPIRY_INTERVAL_SECONDS/,
+    );
+  });
 });

@@ -45,6 +45,7 @@ export async function createTestContext(
     // Deja la BD limpia entre tests
     reset: async () => {
       // seats se borra en cascada con events
+      // reservations y seats se borran en cascada con events
       await db.deleteFrom('events').execute();
       await db.deleteFrom('users').execute();
     },

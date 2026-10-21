@@ -18,6 +18,10 @@ import { EventService } from './modules/events/event.service.js';
 import { SeatController } from './modules/seats/seat.controller.js';
 import { KyselySeatRepository } from './modules/seats/seat.repository.js';
 import { SeatService } from './modules/seats/seat.service.js';
+import { ReservationController } from './modules/reservations/reservation.controller.js';
+import { ReservationExpiryJob } from './modules/reservations/reservation-expiry.job.js';
+import { KyselyReservationRepository } from './modules/reservations/reservation.repository.js';
+import { ReservationService } from './modules/reservations/reservation.service.js';
 
 export interface ContainerOverrides {
   hasher?: PasswordHasher;
@@ -39,6 +43,13 @@ export function buildContainer(
   const authService = new AuthService(userService, hasher, tokens);
   const seatService = new SeatService(new KyselySeatRepository(db));
   const eventService = new EventService(new KyselyEventRepository(db), seatService, db);
+  const reservationService = new ReservationService(
+    new KyselyReservationRepository(db),
+    seatService,
+    eventService,
+    db,
+    env.RESERVATION_TTL_MINUTES,
+  );
 
   return {
     logger,
@@ -46,7 +57,14 @@ export function buildContainer(
     authController: new AuthController(authService),
     userController: new UserController(userService),
     eventController: new EventController(eventService),
-    seatController: new SeatController(seatService, eventService),
+    seatController: new SeatController(seatService, eventService, reservationService),
+    reservationController: new ReservationController(reservationService),
+    reservationExpiryJob: new ReservationExpiryJob(
+      reservationService,
+      logger,
+      env.RESERVATION_EXPIRY_INTERVAL_SECONDS,
+    ),
+    reservationService,
     healthController: new HealthController(new HealthService(db)),
     adminSeeder: new AdminSeeder(
       userService,

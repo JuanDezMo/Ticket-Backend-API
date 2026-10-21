@@ -6,6 +6,7 @@ import { createHealthRoutes } from './modules/health/health.routes.js';
 import { createUserRoutes } from './modules/users/user.routes.js';
 import { createEventRoutes } from './modules/events/event.routes.js';
 import { createSeatRoutes } from './modules/seats/seat.routes.js';
+import { createReservationRoutes } from './modules/reservations/reservation.routes.js';
 
 export function createApp(container: Container): Express {
   const app = express();
@@ -17,6 +18,11 @@ export function createApp(container: Container): Express {
   app.use('/users', createUserRoutes(container.userController, container.authenticate));
   app.use('/events', createEventRoutes(container.eventController, container.authenticate));
   app.use('/events/:id/seats', createSeatRoutes(container.seatController, container.authenticate));
+
+  app.use(
+    '/reservations',
+    createReservationRoutes(container.reservationController, container.authenticate),
+  );
 
   app.use(notFoundHandler);
   app.use(errorHandler(container.logger));

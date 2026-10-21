@@ -1,7 +1,7 @@
 # ticket-api
 
 Backend de la plataforma de tickets (eventos, seats, reservas y compra de tickets).
-Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) y `events-seats` (eventos y seats).
+Este README cubre los cambios `auth-users` (base del proyecto, registro, login y administración de usuarios) `events-seats` (eventos y seats) y `reservations` (reservas con vencimiento).
 
 Documentación de referencia: `docs/business-rules.md` (reglas de negocio) y `docs/architecture.md` (arquitectura y contrato de la API).
 
@@ -40,6 +40,8 @@ pnpm dev
 | `JWT_EXPIRES_IN_SECONDS` | No | Vida del token, por defecto 3600 |
 | `PORT` | No | Puerto HTTP, por defecto 3000 |
 | `LOG_LEVEL` | No | `info` por defecto |
+| `RESERVATION_TTL_MINUTES` | No | Vigencia de una reserva en minutos, por defecto 10 |
+| `RESERVATION_EXPIRY_INTERVAL_SECONDS` | No | Frecuencia del job que libera reservas vencidas, por defecto 60 |
 | `SEED_ADMIN_EMAIL` | No | Email del primer ADMIN |
 | `SEED_ADMIN_PASSWORD` | No | Contraseña del primer ADMIN (mínimo 8 caracteres) |
 
@@ -67,6 +69,7 @@ ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente
 | `POST /users` | ADMIN | Crea un usuario `USER` o `ADMIN`. Body: `email`, `password`, `role` |
 | `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
+| `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
 | `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
 | `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
@@ -123,3 +126,15 @@ curl "localhost:3000/events?type=CONCERT&search=rock&page=1&pageSize=10"
 # Seats disponibles (requiere token; <EVENT_ID> es el id devuelto al crear el evento)
 curl "localhost:3000/events/<EVENT_ID>/seats?status=AVAILABLE" -H "Authorization: Bearer $TOKEN"
 ```
+
+### Reservas
+
+```bash
+# Un USER reserva el seat C7 de un evento (el monto lo calcula el servidor)
+curl -X POST localhost:3000/reservations -H "Authorization: Bearer $USER_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"eventId":"<EVENT_ID>","seat":"C7"}'
+```
+
+La reserva dura `RESERVATION_TTL_MINUTES`. Las reservas vencidas se liberan al reservar, al listar los seats del evento y por un job
+periódico, así que el seat vuelve a `AVAILABLE`. Respuestas de error: `404` `EVENT_NOT_FOUND` / `SEAT_NOT_FOUND`,
+`409` `SEAT_NOT_AVAILABLE` / `EVENT_NOT_ACTIVE`.
