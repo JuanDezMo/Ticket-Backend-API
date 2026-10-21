@@ -80,7 +80,10 @@ export class ReservationService {
     if (reservation.userId !== userId) throw new AppError('FORBIDDEN');
 
     const seat = await this.seats.findById(reservation.seatId);
-    if (!seat) throw new AppError('INTERNAL_ERROR');
+    // No debería pasar por la clave foránea: es un error inesperado, no de negocio. Un Error
+    // normal (no AppError) hace que el errorHandler lo registre en el log y responda 500 genérico
+    if (!seat)
+      throw new Error(`Seat ${reservation.seatId} not found for reservation ${reservation.id}`);
 
     // Estado efectivo (RN-RES-8): una ACTIVE vencida según la hora de la BD se informa como
     // EXPIRED, con el mismo criterio de la compra (RN-RES-7). No se escribe: la liberación

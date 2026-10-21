@@ -4,6 +4,7 @@ import type { Event } from '../../src/modules/events/event.types.js';
 import { ReservationService } from '../../src/modules/reservations/reservation.service.js';
 import type { ReservationRepository } from '../../src/modules/reservations/reservation.repository.js';
 import type { Seat } from '../../src/modules/seats/seat.types.js';
+import { AppError } from '../../src/shared/errors/index.js';
 
 const NOW = new Date('2026-06-01T12:00:00Z');
 const event: Event = {
@@ -197,11 +198,12 @@ describe('ReservationService.getForOwner', () => {
     expectNoWrites(ctx);
   });
 
-  it('fails with INTERNAL_ERROR when the seat does not exist', async () => {
+  it('fails with an unexpected (logged) error when the seat does not exist', async () => {
     const ctx = setup({ found: found('ACTIVE'), seatById: null });
-    await expect(ctx.service.getForOwner('user-1', 'res-1')).rejects.toMatchObject({
-      code: 'INTERNAL_ERROR',
-    });
+    const error = await ctx.service.getForOwner('user-1', 'res-1').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(AppError);
+    expect((error as Error).message).toBe('Seat seat-1 not found for reservation res-1');
     expectNoWrites(ctx);
   });
 });
