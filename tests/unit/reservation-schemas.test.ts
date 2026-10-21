@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createReservationSchema } from '../../src/modules/reservations/reservation.schemas.js';
+import {
+  createReservationSchema,
+  reservationIdParamsSchema,
+} from '../../src/modules/reservations/reservation.schemas.js';
 
 const eventId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 
@@ -24,5 +27,15 @@ describe('createReservationSchema', () => {
     ['an old-style seatId', { eventId, seat: 'C7', seatId: eventId }],
   ])('rejects %s', (_name, body) => {
     expect(createReservationSchema.safeParse(body).success).toBe(false);
+  });
+});
+
+describe('reservationIdParamsSchema', () => {
+  it('accepts a UUID', () => {
+    expect(reservationIdParamsSchema.parse({ id: eventId })).toEqual({ id: eventId });
+  });
+
+  it.each(['abc', ''])('rejects %j', (id) => {
+    expect(reservationIdParamsSchema.safeParse({ id }).success).toBe(false);
   });
 });

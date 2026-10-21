@@ -58,6 +58,13 @@ describe('reservations end to end', () => {
     expect(first.status).toBe(201);
     expect(first.body.amount).toBe(80000);
     expect(await available()).toBe(19);
+    const detail = async () =>
+      (
+        await request(ctx.app)
+          .get(`/reservations/${first.body.id}`)
+          .set(...bearer(ana))
+      ).body.status;
+    expect(await detail()).toBe('ACTIVE');
 
     const taken = await reserve(luis, 'A1');
     expect(taken.status).toBe(409);
@@ -65,6 +72,7 @@ describe('reservations end to end', () => {
 
     await expireReservations(ctx.db, first.body.seatId);
     expect(await available()).toBe(20); // el listado libera la reserva vencida
+    expect(await detail()).toBe('EXPIRED');
 
     const second = await reserve(luis, 'A1');
     expect(second.status).toBe(201);

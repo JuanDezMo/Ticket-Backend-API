@@ -78,7 +78,9 @@ La suite automática (`pnpm test`) no necesita la pasarela. Para validar la inte
 | `POST /users` | ADMIN | Crea un usuario `USER` o `ADMIN`. Body: `email`, `password`, `role` |
 | `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
+| `GET /events/:id` | Público | Detalle de un evento (incluye cancelados) |
 | `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
+| `GET /reservations/:id` | USER | Consulta una reserva propia con su estado efectivo (`EXPIRED` si ya venció) |
 | `POST /events/:id/cancel` | ADMIN | Cancela el evento (no lo elimina): seats a `BLOCKED` y reservas `ACTIVE` a `CANCELLED`. Devuelve `{ id, status, cancelledReservations, cancelledTickets }` |
 | `POST /tickets/purchase` | USER | Paga una reserva y emite el ticket. Body: `reservationId` y `card` (`brand`, `number`, `expiry`, `cvv`). `201` al emitir; `200` con el mismo ticket si la reserva ya estaba pagada |
 | `GET /tickets/me` | USER | Mis tickets, paginados (`page`, `pageSize` de 1 a 20), con los de eventos cancelados como `CANCELLED_BY_EVENT` |

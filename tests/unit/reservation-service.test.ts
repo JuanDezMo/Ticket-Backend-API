@@ -31,18 +31,31 @@ const stored = {
   expiresAt: new Date(NOW.getTime() + 600_000),
 };
 
-function setup(overrides: { event?: Event; seat?: Seat | null; reserved?: boolean } = {}) {
+type Found = { reservation: Omit<typeof stored, 'status'> & { status: string }; expired: boolean };
+
+function setup(
+  overrides: {
+    event?: Event;
+    seat?: Seat | null;
+    reserved?: boolean;
+    found?: Found | null;
+    seatById?: Seat | null;
+  } = {},
+) {
   const events = { getById: vi.fn().mockResolvedValue(overrides.event ?? event) };
   const seats = {
     findByEventAndLabel: vi
       .fn()
       .mockResolvedValue(overrides.seat === undefined ? seat : overrides.seat),
     markReserved: vi.fn().mockResolvedValue(overrides.reserved ?? true),
+    findById: vi
+      .fn()
+      .mockResolvedValue(overrides.seatById === undefined ? seat : overrides.seatById),
   };
   const repo = {
     releaseExpired: vi.fn().mockResolvedValue(0),
     cancelActiveByEvent: vi.fn().mockResolvedValue(0),
-    findForPurchase: vi.fn().mockResolvedValue(null),
+    findForPurchase: vi.fn().mockResolvedValue(overrides.found ?? null),
     lockById: vi.fn().mockResolvedValue(null),
     markConfirmed: vi.fn().mockResolvedValue(true),
     create: vi.fn().mockResolvedValue(stored),
@@ -117,5 +130,78 @@ describe('ReservationService.create', () => {
     await expect(service.create('u', { eventId: 'event-1', seat: 'C7' })).rejects.toMatchObject({
       code: 'SEAT_NOT_AVAILABLE',
     });
+  });
+});
+
+describe('ReservationService.getForOwner', () => {
+  const found = (status: string, expired = false) => ({
+    reservation: { ...stored, status },
+    expired,
+  });
+
+  const expectNoWrites = ({ repo, seats }: ReturnType<typeof setup>) => {
+    expect(repo.releaseExpired).not.toHaveBeenCalled();
+    expect(repo.markConfirmed).not.toHaveBeenCalled();
+    expect(seats.markReserved).not.toHaveBeenCalled();
+  };
+
+  it('returns an ACTIVE reservation that has not expired, with the seat label', async () => {
+    const ctx = setup({ found: found('ACTIVE') });
+    const result = await ctx.service.getForOwner('user-1', 'res-1');
+    expect(result).toEqual({
+      id: 'res-1',
+      eventId: 'event-1',
+      seatId: 'seat-1',
+      seat: 'C7',
+      status: 'ACTIVE',
+      amount: 150000,
+      expiresAt: stored.expiresAt.toISOString(),
+      createdAt: NOW.toISOString(),
+    });
+    expect(ctx.seats.findById).toHaveBeenCalledWith('seat-1');
+    expectNoWrites(ctx);
+  });
+
+  it('reports an expired ACTIVE reservation as EXPIRED without writing', async () => {
+    const ctx = setup({ found: found('ACTIVE', true) });
+    expect((await ctx.service.getForOwner('user-1', 'res-1')).status).toBe('EXPIRED');
+    expectNoWrites(ctx);
+  });
+
+  it('keeps CONFIRMED even when expires_at has passed', async () => {
+    const ctx = setup({ found: found('CONFIRMED', true) });
+    expect((await ctx.service.getForOwner('user-1', 'res-1')).status).toBe('CONFIRMED');
+    expectNoWrites(ctx);
+  });
+
+  it('returns CANCELLED as stored', async () => {
+    const ctx = setup({ found: found('CANCELLED') });
+    expect((await ctx.service.getForOwner('user-1', 'res-1')).status).toBe('CANCELLED');
+    expectNoWrites(ctx);
+  });
+
+  it('rejects another user with FORBIDDEN before reading the seat', async () => {
+    const ctx = setup({ found: found('ACTIVE') });
+    await expect(ctx.service.getForOwner('user-2', 'res-1')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(ctx.seats.findById).not.toHaveBeenCalled();
+    expectNoWrites(ctx);
+  });
+
+  it('rejects an unknown reservation with RESERVATION_NOT_FOUND', async () => {
+    const ctx = setup({ found: null });
+    await expect(ctx.service.getForOwner('user-1', 'res-1')).rejects.toMatchObject({
+      code: 'RESERVATION_NOT_FOUND',
+    });
+    expectNoWrites(ctx);
+  });
+
+  it('fails with INTERNAL_ERROR when the seat does not exist', async () => {
+    const ctx = setup({ found: found('ACTIVE'), seatById: null });
+    await expect(ctx.service.getForOwner('user-1', 'res-1')).rejects.toMatchObject({
+      code: 'INTERNAL_ERROR',
+    });
+    expectNoWrites(ctx);
   });
 });

@@ -1,7 +1,13 @@
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { bearer, createUserAndLogin } from '../helpers/auth.js';
-import { expireReservations, futureDate, insertEventWithSeats, seatOf } from '../helpers/events.js';
+import {
+  expireReservations,
+  futureDate,
+  insertEventWithSeats,
+  insertReservation,
+  seatOf,
+} from '../helpers/events.js';
 import { createTestContext, type TestContext } from '../helpers/test-app.js';
 
 describe('POST /reservations', () => {
@@ -205,5 +211,122 @@ describe('POST /reservations with a custom TTL', () => {
     const diff = new Date(res.body.expiresAt).getTime() - new Date(res.body.createdAt).getTime();
     expect(diff / 60_000).toBeCloseTo(3, 1);
     await ctx.close();
+  });
+});
+
+describe('GET /reservations/:id', () => {
+  let ctx: TestContext;
+  let userToken: string;
+  let userId: string;
+  let otherToken: string;
+  let adminToken: string;
+  let eventId: string;
+
+  beforeAll(async () => {
+    ctx = await createTestContext();
+  });
+  afterAll(async () => {
+    await ctx.close();
+  });
+  beforeEach(async () => {
+    await ctx.reset();
+    ({ token: userToken, userId } = await createUserAndLogin(ctx.app, ctx.db, 'USER'));
+    otherToken = (await createUserAndLogin(ctx.app, ctx.db, 'USER', 'other@mail.com')).token;
+    adminToken = (await createUserAndLogin(ctx.app, ctx.db, 'ADMIN')).token;
+    eventId = (await insertEventWithSeats(ctx.db, { capacity: 20, price: 150000 })).id;
+  });
+
+  const reserve = (token: string, seat: string) =>
+    request(ctx.app)
+      .post('/reservations')
+      .set(...bearer(token))
+      .send({ eventId, seat });
+  const get = (token: string | null, id: string) => {
+    const req = request(ctx.app).get(`/reservations/${id}`);
+    if (token) req.set(...bearer(token));
+    return req;
+  };
+
+  it('returns the same body that POST /reservations returned', async () => {
+    const created = await reserve(userToken, 'B3');
+    const res = await get(userToken, created.body.id);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(created.body);
+  });
+
+  it('reports an expired ACTIVE reservation as EXPIRED without changing the database', async () => {
+    const created = await reserve(userToken, 'B3');
+    await expireReservations(ctx.db);
+    const res = await get(userToken, created.body.id);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('EXPIRED');
+
+    const stored = await ctx.db
+      .selectFrom('reservations')
+      .select('status')
+      .where('id', '=', created.body.id)
+      .executeTakeFirstOrThrow();
+    expect(stored.status).toBe('ACTIVE');
+    expect((await seatOf(ctx.db, eventId, 'B', 3)).status).toBe('RESERVED');
+  });
+
+  it('returns a paid reservation as CONFIRMED', async () => {
+    const seat = await seatOf(ctx.db, eventId, 'A', 1);
+    const reservation = await insertReservation(ctx.db, {
+      userId,
+      eventId,
+      seatId: seat.id,
+      status: 'CONFIRMED',
+      seatStatus: 'SOLD',
+    });
+    const res = await get(userToken, reservation.id);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('CONFIRMED');
+  });
+
+  it('returns CANCELLED after the event is cancelled', async () => {
+    const created = await reserve(userToken, 'B3');
+    const cancel = await request(ctx.app)
+      .post(`/events/${eventId}/cancel`)
+      .set(...bearer(adminToken));
+    expect(cancel.status).toBe(200);
+    const res = await get(userToken, created.body.id);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('CANCELLED');
+  });
+
+  it("rejects another user's reservation with 403 and no reservation data", async () => {
+    const created = await reserve(otherToken, 'B3');
+    const res = await get(userToken, created.body.id);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+    expect(res.body).not.toHaveProperty('seat');
+    expect(res.body).not.toHaveProperty('amount');
+  });
+
+  it('rejects an ADMIN with 403 FORBIDDEN', async () => {
+    const created = await reserve(userToken, 'B3');
+    const res = await get(adminToken, created.body.id);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  it('requires a token (401)', async () => {
+    const created = await reserve(userToken, 'B3');
+    const res = await get(null, created.body.id);
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('UNAUTHORIZED');
+  });
+
+  it('returns 404 RESERVATION_NOT_FOUND for an unknown id', async () => {
+    const res = await get(userToken, crypto.randomUUID());
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('RESERVATION_NOT_FOUND');
+  });
+
+  it('returns 400 VALIDATION_ERROR when the id is not a UUID', async () => {
+    const res = await get(userToken, 'abc');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 });

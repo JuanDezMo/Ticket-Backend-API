@@ -229,7 +229,9 @@ describe('events routes', () => {
     it('also responds with a USER or ADMIN token', async () => {
       const { id } = await insertEvent(ctx.db);
       for (const token of [userToken, adminToken]) {
-        const res = await request(ctx.app).get(`/events/${id}`).set(...bearer(token));
+        const res = await request(ctx.app)
+          .get(`/events/${id}`)
+          .set(...bearer(token));
         expect(res.status).toBe(200);
         expect(res.body.id).toBe(id);
       }

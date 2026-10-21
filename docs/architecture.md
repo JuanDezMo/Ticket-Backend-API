@@ -202,9 +202,11 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `POST /users` (ADMIN) | 201 | 400, 401, 403, 409 email ya existe |
 | `GET /events` (público) | 200 | 400 paginación o filtros inválidos (`pageSize` fuera de 1 a 20, `page` menor a 1, tipo o fechas inválidos) |
 | `POST /events` (ADMIN) | 201 | 400, 401, 403 |
+| `GET /events/:id` (público) | 200 | 400 (id inválido), 404 `EVENT_NOT_FOUND` |
 | `GET /events/:id/seats` | 200 | 401, 404 |
 | `POST /events/:id/cancel` (ADMIN) | 200 | 400 (id inválido), 401, 403, 404 `EVENT_NOT_FOUND`, 409 `EVENT_ALREADY_CANCELLED` o `EVENT_ALREADY_ENDED` |
 | `POST /reservations` (USER) | 201 | 400 (`eventId` o `seat` ausentes o inválidos), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `SEAT_NOT_AVAILABLE` o `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado) |
+| `GET /reservations/:id` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND` |
 | `POST /tickets/purchase` (USER) | 201 al emitir; 200 si la reserva ya tenía ticket (mismo ticket, sin nuevo cobro) | ver tabla siguiente |
 | `GET /tickets/me` (USER) | 200 | 400 (paginación inválida), 401, 403 |
 
@@ -245,7 +247,7 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 { "accessToken": "eyJ...", "tokenType": "Bearer", "expiresIn": 3600 }
 ```
 
-**`POST /events`** → 201 y **`GET /events`** → 200 (el segundo dentro de `data`, con `meta`)
+**`POST /events`** → 201, **`GET /events/:id`** → 200 y **`GET /events`** → 200 (este último dentro de `data`, con `meta`). El detalle también devuelve los eventos `CANCELLED`
 ```json
 {
   "id": "uuid", "name": "Rock Night", "description": "...", "type": "CONCERT",
@@ -278,6 +280,8 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
   "expiresAt": "2026-10-20T15:10:00Z", "createdAt": "2026-10-20T15:00:00Z"
 }
 ```
+
+**`GET /reservations/:id`** → 200 con el mismo cuerpo que `POST /reservations`. `status` es el estado efectivo: una reserva `ACTIVE` vencida según la hora de la BD se devuelve como `EXPIRED`, aunque el job todavía no la haya liberado; la consulta no modifica datos (RN-RES-8).
 
 **`POST /tickets/purchase`** → 201 (200 con el mismo cuerpo si la reserva ya tenía ticket)
 

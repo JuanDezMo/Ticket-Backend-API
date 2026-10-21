@@ -22,7 +22,7 @@ Fuera del MVP: refresh tokens, endpoint de reembolso, zonas/precios por seat, em
 | RN-AUTH-1 | El registro público (`POST /auth/register`) crea siempre un usuario `USER`; no acepta el campo `role`. |
 | RN-AUTH-2 | El email es único. |
 | RN-AUTH-3 | El login devuelve un JWT con `sub` (id de usuario) y `role`. |
-| RN-AUTH-4 | Registro, login y listado de eventos son públicos. El resto exige JWT válido. |
+| RN-AUTH-4 | Registro, login, listado y detalle de eventos son públicos. El resto exige JWT válido. |
 | RN-AUTH-5 | Solo un `ADMIN` puede crear otros usuarios, con rol `USER` o `ADMIN`, mediante `POST /users`. |
 | RN-AUTH-6 | El primer `ADMIN` se crea por seed al arrancar, con `SEED_ADMIN_EMAIL` y `SEED_ADMIN_PASSWORD`. Solo se crea si no existe ningún `ADMIN`; si ya existe, no hace nada. Si faltan las variables y no hay `ADMIN`, el arranque continúa y se registra un aviso. |
 
@@ -34,7 +34,9 @@ Permisos:
 | Crear evento | x | |
 | Cancelar evento | x | |
 | Listar eventos y seats | x | x |
+| Ver detalle de evento (también público) | x | x |
 | Reservar seat | | x |
+| Consultar mi reserva | | x |
 | Comprar ticket | | x |
 | Ver mis tickets | | x |
 
@@ -101,6 +103,7 @@ Cualquier estado --evento cancelado--> BLOCKED
 | RN-RES-5 | Estados: `ACTIVE`, `EXPIRED`, `CONFIRMED`, `CANCELLED`. |
 | RN-RES-6 | La reserva guarda `expires_at` (creación + TTL) calculado con la hora de la BD. Las reservas vencidas se liberan en dos momentos: al listar seats disponibles o reservar en un evento, y por un job periódico (cada 60 s). Ambos usan la misma operación. |
 | RN-RES-7 | La compra siempre valida `expires_at > now()`; si no se cumple, responde `RESERVATION_EXPIRED`. La corrección no depende de que el job haya corrido. |
+| RN-RES-8 | Un USER puede consultar solo sus propias reservas; una reserva `ACTIVE` con `expires_at <= now()` se informa como `EXPIRED` sin modificarla. |
 
 ## 6. Compra de tickets
 
