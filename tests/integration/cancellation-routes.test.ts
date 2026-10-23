@@ -184,7 +184,7 @@ describe('POST /events/:id/cancel', () => {
     const reserve = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(userToken))
-      .send({ eventId: event.id, seat: 'A1' });
+      .send({ eventId: event.id, seats: ['A1'] });
     expect(reserve.status).toBe(409);
     expect(reserve.body.code).toBe('EVENT_NOT_ACTIVE');
 

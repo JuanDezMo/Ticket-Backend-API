@@ -205,7 +205,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `GET /events/:id` (público) | 200 | 400 (id inválido), 404 `EVENT_NOT_FOUND` |
 | `GET /events/:id/seats` | 200 | 401, 404 |
 | `POST /events/:id/cancel` (ADMIN) | 200 | 400 (id inválido), 401, 403, 404 `EVENT_NOT_FOUND`, 409 `EVENT_ALREADY_CANCELLED` o `EVENT_ALREADY_ENDED` |
-| `POST /reservations` (USER) | 201 | 400 (`eventId` o `seat` ausentes o inválidos), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `SEAT_NOT_AVAILABLE` o `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado) |
+| `POST /reservations` (USER) | 201 | 400 (`eventId` o `seats` ausentes o inválidos, de 1 a 8 seats sin repetir, o el campo antiguo `seat`), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado), `SEAT_LIMIT_REACHED` (supera `maxSeatsPerUser` del evento), `HOLD_LIMIT_REACHED` (supera el tope global de reservas activas) o `SEAT_NOT_AVAILABLE` (algún seat ocupado: no se reserva ninguno) |
 | `GET /reservations/:id` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND` |
 | `POST /reservations/:id/cancel` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND`, 409 `RESERVATION_ALREADY_CANCELLED`, `RESERVATION_ALREADY_CONFIRMED`, `RESERVATION_EXPIRED` o `EVENT_CANCELLED` |
 | `POST /tickets/purchase` (USER) | 201 al emitir; 200 si la reserva ya tenía ticket (mismo ticket, sin nuevo cobro) | ver tabla siguiente |
@@ -274,18 +274,23 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 { "id": "uuid", "status": "CANCELLED", "cancelledReservations": 4, "cancelledTickets": 12 }
 ```
 
-**`POST /reservations`** → 201. Solicitud: `{ "eventId": "uuid", "seat": "C7" }` (la etiqueta `A`-`Z` + `1`-`10`, en minúscula también se acepta; el monto nunca se envía; `amount` es el precio a pagar, calculado por el servidor, RN-TKT-9)
+**`POST /reservations`** → 201. Solicitud: `{ "eventId": "uuid", "seats": ["C7", "C8"] }` (de 1 a 8 etiquetas `A`-`Z` + `1`-`10`, sin repetir; en minúscula también se acepta; el monto nunca se envía; `amount` es el precio de un seat, calculado por el servidor, RN-TKT-9). Todas las reservas del lote se crean juntas (todo o nada) y comparten `createdAt` y `expiresAt`. La respuesta es siempre una lista, en el orden pedido, incluso con un solo seat:
 ```json
 {
-  "id": "uuid", "eventId": "uuid", "seatId": "uuid", "seat": "C7",
-  "status": "ACTIVE", "amount": 150000,
-  "expiresAt": "2026-10-20T15:10:00Z", "createdAt": "2026-10-20T15:00:00Z"
+  "reservations": [
+    {
+      "id": "uuid", "eventId": "uuid", "seatId": "uuid", "seat": "C7",
+      "status": "ACTIVE", "amount": 150000,
+      "expiresAt": "2026-10-20T15:10:00Z", "createdAt": "2026-10-20T15:00:00Z"
+    }
+  ]
 }
 ```
+Errores propios del límite: `409 SEAT_LIMIT_REACHED` ("You can hold up to N seats for this event") y `409 HOLD_LIMIT_REACHED`; `SEAT_NOT_AVAILABLE` nombra los seats ocupados ("Seats not available: A2, A3").
 
-**`GET /reservations/:id`** → 200 con el mismo cuerpo que `POST /reservations`. `status` es el estado efectivo: una reserva `ACTIVE` vencida según la hora de la BD se devuelve como `EXPIRED`, aunque el job todavía no la haya liberado; la consulta no modifica datos (RN-RES-8). También puede devolver `CANCELLED_BY_USER`.
+**`GET /reservations/:id`** → 200 con el mismo cuerpo de una reserva de `POST /reservations` (un objeto, no una lista). `status` es el estado efectivo: una reserva `ACTIVE` vencida según la hora de la BD se devuelve como `EXPIRED`, aunque el job todavía no la haya liberado; la consulta no modifica datos (RN-RES-8). También puede devolver `CANCELLED_BY_USER`.
 
-**`POST /reservations/:id/cancel`** → 200 con el mismo cuerpo que `POST /reservations` y `status` `CANCELLED_BY_USER`; el seat vuelve a `AVAILABLE` (RN-RES-9).
+**`POST /reservations/:id/cancel`** → 200 con el cuerpo de una reserva (un objeto, no una lista) y `status` `CANCELLED_BY_USER`; el seat vuelve a `AVAILABLE` (RN-RES-9).
 
 **`POST /tickets/purchase`** → 201 (200 con el mismo cuerpo si la reserva ya tenía ticket)
 

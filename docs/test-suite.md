@@ -151,3 +151,19 @@ Para empezar desde cero: `docker compose down -v` en cada proyecto.
 | GW-01 devuelve `502` `PAYMENT_GATEWAY_ERROR` | La pasarela no es alcanzable desde `ticket-api` (revisar `PAYMENT_GATEWAY_URL`) |
 | Fallan solo las comprobaciones de BD (`GW-01f`, `03d`, `04e`...) | El contenedor `postgres` de la pasarela no está levantado, o `GATEWAY_DIR` es incorrecto |
 | Falla solo GW-16 o GW-17 | No se pudo crear la instancia temporal (puertos `3101`/`3102` ocupados, o `docker compose` no disponible); usar `WITH_TEMP_INSTANCES=0` para omitirlos |
+
+## 7. Script de límites de seats (`verify-limits.sh`)
+
+Segundo script, independiente del anterior, que comprueba contra la API **real** las reglas de límites (`maxSeatsPerUser` del evento, reserva por lotes y tope global de reservas activas). No necesita la pasarela salvo el caso `L-20` (compra), que se omite si no responde.
+
+```bash
+./scripts/verify-limits.sh
+MAX_ACTIVE_HOLDS=8 ./scripts/verify-limits.sh   # debe coincidir con MAX_ACTIVE_HOLDS_PER_USER de la API
+```
+
+- **Es repetible:** cada corrida crea sus propios eventos y usuarios con nombres únicos, y cancela al final los eventos que creó. No hace falta limpiar nada entre corridas.
+- **Es consistente con los seats:** cada evento se crea con 40 seats (filas A a D) y los seats se piden con `take`, que reparte etiquetas válidas en orden y aborta con un "error del script" si faltaran. Un caso nunca falla por pedir un seat que no existe.
+- **Valores límite:** límites 1 y 8 (válidos), 0 y 9 (inválidos), un límite mayor que la capacidad, lotes de 1, 8, 0 y 9 seats, y el tope global justo en el máximo y uno más.
+- **Variable importante:** `MAX_ACTIVE_HOLDS` debe ser igual al `MAX_ACTIVE_HOLDS_PER_USER` con el que corre la API (8 por defecto). Si no coincide, solo falla el caso `L-40c`.
+- **Casos:** `L-01` a `L-06` (límite al crear el evento), `L-10` a `L-14` (límite por evento, por usuario y cancelación), `L-30` a `L-33` (lote todo o nada y validación), `L-40` y `L-41` (tope global) y `L-20` (un ticket comprado cuenta para el límite).
+- **Resultado de la última ejecución** (base recreada, API con la configuración por defecto): 35 casos, 35 pasaron, dos corridas seguidas.

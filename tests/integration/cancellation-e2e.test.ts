@@ -41,7 +41,7 @@ describe('event cancellation end to end', () => {
       request(ctx.app)
         .post('/reservations')
         .set(...bearer(token))
-        .send({ eventId, seat });
+        .send({ eventId, seats: [seat] });
 
     expect((await reserve(ana, 'A1')).status).toBe(201);
     expect((await reserve(luis, 'A2')).status).toBe(201);

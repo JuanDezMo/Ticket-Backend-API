@@ -23,11 +23,12 @@ export async function reserveSeat(
   const res = await request(app)
     .post('/reservations')
     .set(...bearer(token))
-    .send({ eventId, seat: options.seat ?? 'A1' });
+    .send({ eventId, seats: [options.seat ?? 'A1'] });
   return {
     token,
     eventId,
-    reservation: res.body as { id: string; seatId: string; amount: number },
+    // POST /reservations responde un lote: aquí siempre se reserva un seat
+    reservation: (res.body.reservations as { id: string; seatId: string; amount: number }[])[0]!,
   };
 }
 

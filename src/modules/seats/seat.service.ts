@@ -25,6 +25,18 @@ export class SeatService {
     return this.seats.findByEventAndPosition(eventId, position);
   }
 
+  findByEventAndLabels(eventId: string, positions: SeatPosition[]): Promise<Seat[]> {
+    return this.seats.findByEventAndPositions(eventId, positions);
+  }
+
+  lockByIds(ids: string[], executor: Db): Promise<Seat[]> {
+    return this.seats.lockByIds(ids, executor);
+  }
+
+  markReservedMany(ids: string[], executor: Db): Promise<number> {
+    return this.seats.markReservedMany(ids, executor);
+  }
+
   markReserved(seatId: string, executor: Db): Promise<boolean> {
     return this.seats.markReserved(seatId, executor);
   }

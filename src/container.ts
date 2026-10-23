@@ -62,6 +62,7 @@ export function buildContainer(
     eventService,
     db,
     env.RESERVATION_TTL_MINUTES,
+    env.MAX_ACTIVE_HOLDS_PER_USER,
   );
 
   const gateway =

@@ -46,6 +46,7 @@ pnpm dev
 | `PORT` | No | Puerto HTTP, por defecto 3000 |
 | `LOG_LEVEL` | No | `info` por defecto |
 | `RESERVATION_TTL_MINUTES` | No | Vigencia de una reserva en minutos, por defecto 10 |
+| `MAX_ACTIVE_HOLDS_PER_USER` | No | Reservas activas que un usuario puede tener a la vez entre todos los eventos (entero ≥ 1), por defecto 8 |
 | `RESERVATION_EXPIRY_INTERVAL_SECONDS` | No | Frecuencia del job que libera reservas vencidas, por defecto 60 |
 | `SEED_ADMIN_EMAIL` | No | Email del primer ADMIN |
 | `SEED_ADMIN_PASSWORD` | No | Contraseña del primer ADMIN (mínimo 8 caracteres) |
@@ -54,6 +55,8 @@ Si falta una variable obligatoria el proceso termina indicando cuál. El seed so
 ningún ADMIN; cambiar estas variables después no modifica a un ADMIN existente.
 
 ## Pruebas de integración con la pasarela real
+
+La suite automática (`pnpm test`) no necesita la pasarela. Los límites de seats se verifican contra la API real con `./scripts/verify-limits.sh` (ver [`docs/test-suite.md`](docs/test-suite.md), sección 7).
 
 La suite automática (`pnpm test`) no necesita la pasarela. Para validar la integración contra el microservicio real hay un script y su documentación: [`docs/test-suite.md`](docs/test-suite.md) (cómo levantar primero la pasarela, luego `ticket-api`, y ejecutar `./scripts/verify-gateway.sh`).
 
@@ -83,7 +86,7 @@ Un Jenkins local (`ci/jenkins/`) corre el `Jenkinsfile` en cada commit de `main`
 | `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `maxSeatsPerUser` (1 a 8, obligatorio, no mayor que `capacity`), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
 | `GET /events/:id` | Público | Detalle de un evento (incluye cancelados) |
-| `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
+| `POST /reservations` | USER | Reserva de 1 a 8 seats a la vez (todo o nada, mismo vencimiento). Body: `eventId` y `seats` (lista de etiquetas `A`-`Z` + `1`-`10`, por ejemplo `["C7", "C8"]`). Devuelve `{ reservations: [...] }` con `amount` (precio de un seat, calculado por el servidor) y `expiresAt`. Respeta `maxSeatsPerUser` del evento y el tope global `MAX_ACTIVE_HOLDS_PER_USER` |
 | `POST /reservations/:id/cancel` | USER | Cancela una reserva propia vigente y libera el seat (`CANCELLED_BY_USER`) |
 | `GET /reservations/:id` | USER | Consulta una reserva propia con su estado efectivo (`EXPIRED` si ya venció) |
 | `POST /events/:id/cancel` | ADMIN | Cancela el evento (no lo elimina): seats a `BLOCKED` y reservas `ACTIVE` a `CANCELLED`. Devuelve `{ id, status, cancelledReservations, cancelledTickets }` |

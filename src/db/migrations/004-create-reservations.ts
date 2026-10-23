@@ -30,6 +30,14 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`CREATE INDEX reservations_event_active_idx ON reservations (event_id) WHERE status = 'ACTIVE'`.execute(
     db,
   );
+  // Conteo del límite por evento (reservas ACTIVE y CONFIRMED del usuario en ese evento)
+  await sql`CREATE INDEX reservations_user_event_hold_idx ON reservations (user_id, event_id) WHERE status IN ('ACTIVE', 'CONFIRMED')`.execute(
+    db,
+  );
+  // Conteo del tope global (reservas ACTIVE del usuario en todos los eventos)
+  await sql`CREATE INDEX reservations_user_active_idx ON reservations (user_id) WHERE status = 'ACTIVE'`.execute(
+    db,
+  );
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {

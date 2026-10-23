@@ -38,31 +38,36 @@ describe('POST /reservations', () => {
     (await seatOf(ctx.db, eventId, row, number)).status;
 
   it('creates an ACTIVE reservation with the event price and marks the seat RESERVED', async () => {
-    const res = await reserve(userToken, { eventId, seat: 'B3' });
+    const res = await reserve(userToken, { eventId, seats: ['B3'] });
     expect(res.status).toBe(201);
     expect(res.body).toEqual({
-      id: expect.any(String),
-      eventId,
-      seatId: (await seatOf(ctx.db, eventId, 'B', 3)).id,
-      seat: 'B3',
-      status: 'ACTIVE',
-      amount: 150000,
-      expiresAt: expect.any(String),
-      createdAt: expect.any(String),
+      reservations: [
+        {
+          id: expect.any(String),
+          eventId,
+          seatId: (await seatOf(ctx.db, eventId, 'B', 3)).id,
+          seat: 'B3',
+          status: 'ACTIVE',
+          amount: 150000,
+          expiresAt: expect.any(String),
+          createdAt: expect.any(String),
+        },
+      ],
     });
     expect(await seatStatus('B', 3)).toBe('RESERVED');
-    const diff = new Date(res.body.expiresAt).getTime() - new Date(res.body.createdAt).getTime();
+    const [created] = res.body.reservations;
+    const diff = new Date(created.expiresAt).getTime() - new Date(created.createdAt).getTime();
     expect(diff / 60_000).toBeCloseTo(10, 1);
   });
 
   it('accepts a lowercase label', async () => {
-    const res = await reserve(userToken, { eventId, seat: 'a1' });
+    const res = await reserve(userToken, { eventId, seats: ['a1'] });
     expect(res.status).toBe(201);
-    expect(res.body.seat).toBe('A1');
+    expect(res.body.reservations[0].seat).toBe('A1');
   });
 
   it('records the authenticated user as owner', async () => {
-    await reserve(userToken, { eventId, seat: 'A1' });
+    await reserve(userToken, { eventId, seats: ['A1'] });
     const row = await ctx.db.selectFrom('reservations').selectAll().executeTakeFirstOrThrow();
     const user = await ctx.db
       .selectFrom('users')
@@ -73,25 +78,25 @@ describe('POST /reservations', () => {
   });
 
   it('returns 403 FORBIDDEN for an ADMIN and does not reserve', async () => {
-    const res = await reserve(adminToken, { eventId, seat: 'A1' });
+    const res = await reserve(adminToken, { eventId, seats: ['A1'] });
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
     expect(await seatStatus('A', 1)).toBe('AVAILABLE');
   });
 
   it('returns 401 UNAUTHORIZED without a token', async () => {
-    const res = await reserve(null, { eventId, seat: 'A1' });
+    const res = await reserve(null, { eventId, seats: ['A1'] });
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('UNAUTHORIZED');
   });
 
   it.each([
-    ['a missing eventId', { eventId: undefined, seat: 'A1' }],
+    ['a missing eventId', { eventId: undefined, seats: ['A1'] }],
     ['a missing seat', {}],
-    ['an invalid eventId', { eventId: 'abc', seat: 'A1' }],
-    ['a label like 7C', { seat: '7C' }],
-    ['a label like C11', { seat: 'C11' }],
-    ['a client-sent amount', { seat: 'A1', amount: 1 }],
+    ['an invalid eventId', { eventId: 'abc', seats: ['A1'] }],
+    ['a label like 7C', { seats: ['7C'] }],
+    ['a label like C11', { seats: ['C11'] }],
+    ['a client-sent amount', { seats: ['A1'], amount: 1 }],
   ])('returns 400 VALIDATION_ERROR for %s', async (_name, override) => {
     const res = await reserve(userToken, { eventId, ...override });
     expect(res.status).toBe(400);
@@ -100,20 +105,20 @@ describe('POST /reservations', () => {
   });
 
   it('returns 404 EVENT_NOT_FOUND for an unknown event', async () => {
-    const res = await reserve(userToken, { eventId: crypto.randomUUID(), seat: 'A1' });
+    const res = await reserve(userToken, { eventId: crypto.randomUUID(), seats: ['A1'] });
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('EVENT_NOT_FOUND');
   });
 
   it('returns 404 SEAT_NOT_FOUND for a label outside the capacity (C7 in a 20-seat event)', async () => {
-    const res = await reserve(userToken, { eventId, seat: 'C7' });
+    const res = await reserve(userToken, { eventId, seats: ['C7'] });
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('SEAT_NOT_FOUND');
   });
 
   it('does not reserve a seat of another event', async () => {
     const small = (await insertEventWithSeats(ctx.db, { capacity: 10 })).id;
-    const res = await reserve(userToken, { eventId: small, seat: 'B3' }); // B3 solo existe en el evento grande
+    const res = await reserve(userToken, { eventId: small, seats: ['B3'] }); // B3 solo existe en el evento grande
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('SEAT_NOT_FOUND');
     expect(await seatStatus('B', 3)).toBe('AVAILABLE');
@@ -121,13 +126,13 @@ describe('POST /reservations', () => {
 
   it('returns 409 SEAT_NOT_AVAILABLE for a seat already reserved by another user, keeping the first reservation', async () => {
     const second = (await createUserAndLogin(ctx.app, ctx.db, 'USER', 'other@mail.com')).token;
-    const first = await reserve(userToken, { eventId, seat: 'A1' });
-    const res = await reserve(second, { eventId, seat: 'A1' });
+    const first = await reserve(userToken, { eventId, seats: ['A1'] });
+    const res = await reserve(second, { eventId, seats: ['A1'] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('SEAT_NOT_AVAILABLE');
     const rows = await ctx.db.selectFrom('reservations').selectAll().execute();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.id).toBe(first.body.id);
+    expect(rows[0]?.id).toBe(first.body.reservations[0].id);
   });
 
   it.each(['SOLD', 'BLOCKED'])('returns 409 SEAT_NOT_AVAILABLE for a %s seat', async (status) => {
@@ -136,7 +141,7 @@ describe('POST /reservations', () => {
       .set({ status })
       .where('id', '=', (await seatOf(ctx.db, eventId, 'A', 1)).id)
       .execute();
-    const res = await reserve(userToken, { eventId, seat: 'A1' });
+    const res = await reserve(userToken, { eventId, seats: ['A1'] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('SEAT_NOT_AVAILABLE');
   });
@@ -148,7 +153,7 @@ describe('POST /reservations', () => {
       .set({ status: 'BLOCKED' })
       .where('event_id', '=', cancelled.id)
       .execute();
-    const res = await reserve(userToken, { eventId: cancelled.id, seat: 'A1' });
+    const res = await reserve(userToken, { eventId: cancelled.id, seats: ['A1'] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('EVENT_NOT_ACTIVE');
   });
@@ -159,7 +164,7 @@ describe('POST /reservations', () => {
       start_date: new Date(Date.now() - 3600_000).toISOString(),
       end_date: futureDate(1),
     });
-    const res = await reserve(userToken, { eventId: started.id, seat: 'A1' });
+    const res = await reserve(userToken, { eventId: started.id, seats: ['A1'] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('EVENT_NOT_ACTIVE');
   });
@@ -169,7 +174,7 @@ describe('POST /reservations', () => {
     for (let i = 0; i < 5; i++) {
       tokens.push((await createUserAndLogin(ctx.app, ctx.db, 'USER', `u${i}@mail.com`)).token);
     }
-    const results = await Promise.all(tokens.map((t) => reserve(t, { eventId, seat: 'A1' })));
+    const results = await Promise.all(tokens.map((t) => reserve(t, { eventId, seats: ['A1'] })));
     expect(results.filter((r) => r.status === 201)).toHaveLength(1);
     expect(results.filter((r) => r.status === 409)).toHaveLength(5);
     const active = await ctx.db
@@ -183,15 +188,15 @@ describe('POST /reservations', () => {
 
   it('lets another user reserve a seat whose reservation already expired, right away', async () => {
     const second = (await createUserAndLogin(ctx.app, ctx.db, 'USER', 'other@mail.com')).token;
-    const first = await reserve(userToken, { eventId, seat: 'A1' });
-    await expireReservations(ctx.db, first.body.seatId);
+    const first = await reserve(userToken, { eventId, seats: ['A1'] });
+    await expireReservations(ctx.db, first.body.reservations[0].seatId);
 
-    const res = await reserve(second, { eventId, seat: 'A1' });
+    const res = await reserve(second, { eventId, seats: ['A1'] });
     expect(res.status).toBe(201);
     const old = await ctx.db
       .selectFrom('reservations')
       .select('status')
-      .where('id', '=', first.body.id)
+      .where('id', '=', first.body.reservations[0].id)
       .executeTakeFirstOrThrow();
     expect(old.status).toBe('EXPIRED');
     expect(await seatStatus('A', 1)).toBe('RESERVED');
@@ -207,8 +212,9 @@ describe('POST /reservations with a custom TTL', () => {
     const res = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(token))
-      .send({ eventId: event.id, seat: 'A1' });
-    const diff = new Date(res.body.expiresAt).getTime() - new Date(res.body.createdAt).getTime();
+      .send({ eventId: event.id, seats: ['A1'] });
+    const [created] = res.body.reservations;
+    const diff = new Date(created.expiresAt).getTime() - new Date(created.createdAt).getTime();
     expect(diff / 60_000).toBeCloseTo(3, 1);
     await ctx.close();
   });
@@ -236,11 +242,14 @@ describe('GET /reservations/:id', () => {
     eventId = (await insertEventWithSeats(ctx.db, { capacity: 20, price: 150000 })).id;
   });
 
-  const reserve = (token: string, seat: string) =>
-    request(ctx.app)
+  // Reserva un seat; `body` es esa reserva (primera del lote) para usarla en las demás pruebas
+  const reserve = async (token: string, seat: string) => {
+    const res = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(token))
-      .send({ eventId, seat });
+      .send({ eventId, seats: [seat] });
+    return { status: res.status, body: res.body.reservations?.[0] ?? res.body };
+  };
   const get = (token: string | null, id: string) => {
     const req = request(ctx.app).get(`/reservations/${id}`);
     if (token) req.set(...bearer(token));
@@ -353,11 +362,13 @@ describe('POST /reservations/:id/cancel', () => {
     eventId = (await insertEventWithSeats(ctx.db, { capacity: 20, price: 150000 })).id;
   });
 
-  const reserve = (token: string, seat = 'B3') =>
-    request(ctx.app)
+  const reserve = async (token: string, seat = 'B3') => {
+    const res = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(token))
-      .send({ eventId, seat });
+      .send({ eventId, seats: [seat] });
+    return { status: res.status, body: res.body.reservations?.[0] ?? res.body };
+  };
   const cancel = (token: string | null, id: string) => {
     const req = request(ctx.app).post(`/reservations/${id}/cancel`);
     if (token) req.set(...bearer(token));

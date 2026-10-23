@@ -7,11 +7,11 @@ export class ReservationController {
 
   create = async (req: Request, res: Response): Promise<void> => {
     // La identidad sale del token, nunca del cuerpo
-    const reservation = await this.reservationService.create(
+    const reservations = await this.reservationService.create(
       req.auth!.userId,
       req.body as CreateReservationBody,
     );
-    res.status(201).json(reservation);
+    res.status(201).json({ reservations });
   };
 
   getById = async (req: Request, res: Response): Promise<void> => {

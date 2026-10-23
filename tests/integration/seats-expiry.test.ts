@@ -25,7 +25,7 @@ describe('GET /events/:id/seats releases expired reservations', () => {
     request(ctx.app)
       .post('/reservations')
       .set(...bearer(userToken))
-      .send({ eventId, seat });
+      .send({ eventId, seats: [seat] });
   const list = (status: string) =>
     request(ctx.app)
       .get(`/events/${eventId}/seats`)
@@ -35,14 +35,14 @@ describe('GET /events/:id/seats releases expired reservations', () => {
 
   it('shows a seat with an expired reservation as AVAILABLE and expires the reservation', async () => {
     const reserved = await reserve('A1');
-    await expireReservations(ctx.db, reserved.body.seatId);
+    await expireReservations(ctx.db, reserved.body.reservations[0].seatId);
 
     const available = await list('AVAILABLE');
     expect(labels(available)).toContain('A1');
     const row = await ctx.db
       .selectFrom('reservations')
       .select('status')
-      .where('id', '=', reserved.body.id)
+      .where('id', '=', reserved.body.reservations[0].id)
       .executeTakeFirstOrThrow();
     expect(row.status).toBe('EXPIRED');
   });
@@ -59,12 +59,12 @@ describe('GET /events/:id/seats releases expired reservations', () => {
     const theirs = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(userToken))
-      .send({ eventId: other.id, seat: 'A1' });
+      .send({ eventId: other.id, seats: ['A1'] });
     await expireReservations(ctx.db);
 
     await list('AVAILABLE'); // solo libera el evento consultado
     const rows = await ctx.db.selectFrom('reservations').select(['id', 'status']).execute();
-    expect(rows.find((r) => r.id === mine.body.id)?.status).toBe('EXPIRED');
-    expect(rows.find((r) => r.id === theirs.body.id)?.status).toBe('ACTIVE');
+    expect(rows.find((r) => r.id === mine.body.reservations[0].id)?.status).toBe('EXPIRED');
+    expect(rows.find((r) => r.id === theirs.body.reservations[0].id)?.status).toBe('ACTIVE');
   });
 });

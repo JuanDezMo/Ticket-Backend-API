@@ -9,6 +9,15 @@ export interface SeatRepository {
   findByEvent(eventId: string, status?: SeatStatus): Promise<Seat[]>;
   /** Busca un seat dentro de un evento concreto por su posición (fila y número). */
   findByEventAndPosition(eventId: string, position: SeatPosition): Promise<Seat | null>;
+  /** Busca varios seats de un evento por posición en una sola consulta (los inexistentes no aparecen). */
+  findByEventAndPositions(eventId: string, positions: SeatPosition[]): Promise<Seat[]>;
+  /**
+   * SELECT ... ORDER BY id FOR UPDATE: bloquea los seats siempre en el mismo orden (id ascendente),
+   * así dos lotes que se cruzan no se bloquean entre sí.
+   */
+  lockByIds(ids: string[], executor: Db): Promise<Seat[]>;
+  /** Pasa a RESERVED, en una sola sentencia, los seats indicados que estén AVAILABLE. Devuelve cuántos cambió. */
+  markReservedMany(ids: string[], executor: Db): Promise<number>;
   /** Pasa el seat a RESERVED solo si está AVAILABLE. Devuelve false si no cambió nada. */
   markReserved(seatId: string, executor?: Db): Promise<boolean>;
   /** Pasa a BLOCKED todos los seats del evento que no lo estén. Devuelve cuántos cambió. */
@@ -53,6 +62,46 @@ export class KyselySeatRepository implements SeatRepository {
       .where('number', '=', number)
       .executeTakeFirst();
     return found ? toSeat(found) : null;
+  }
+
+  async findByEventAndPositions(eventId: string, positions: SeatPosition[]): Promise<Seat[]> {
+    if (positions.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('seats')
+      .selectAll()
+      .where('event_id', '=', eventId)
+      .where((eb) =>
+        eb.or(
+          positions.map(({ row, number }) =>
+            eb.and([eb('row', '=', row), eb('number', '=', number)]),
+          ),
+        ),
+      )
+      .execute();
+    return rows.map(toSeat);
+  }
+
+  async lockByIds(ids: string[], executor: Db): Promise<Seat[]> {
+    if (ids.length === 0) return [];
+    const rows = await executor
+      .selectFrom('seats')
+      .selectAll()
+      .where('id', 'in', ids)
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    return rows.map(toSeat);
+  }
+
+  async markReservedMany(ids: string[], executor: Db): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await executor
+      .updateTable('seats')
+      .set({ status: SEAT_STATUSES.RESERVED })
+      .where('id', 'in', ids)
+      .where('status', '=', SEAT_STATUSES.AVAILABLE)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
   }
 
   async markReserved(seatId: string, executor: Db = this.db): Promise<boolean> {

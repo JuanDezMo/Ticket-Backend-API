@@ -12,6 +12,24 @@ import { SEAT_STATUSES } from '../seats/seat.types.js';
 export interface ReservationRepository {
   /** `expires_at` se calcula con la hora de la BD: now() + ttlMinutes. */
   create(reservation: NewReservation, ttlMinutes: number, executor?: Db): Promise<Reservation>;
+  /**
+   * Inserta todas las reservas del lote en una sola sentencia: comparten `created_at` y `expires_at`
+   * (`now()` es constante dentro de la transacción).
+   */
+  createMany(
+    reservations: NewReservation[],
+    ttlMinutes: number,
+    executor?: Db,
+  ): Promise<Reservation[]>;
+  /**
+   * Bloqueo de asesoría por usuario, liberado al terminar la transacción: serializa las creaciones
+   * de reservas de un mismo usuario para que el conteo y la inserción no se crucen.
+   */
+  lockHoldsOf(userId: string, executor: Db): Promise<void>;
+  /** Reservas del usuario en el evento que cuentan para el límite: ACTIVE vigentes y CONFIRMED. */
+  countHoldsForEvent(userId: string, eventId: string, executor?: Db): Promise<number>;
+  /** Reservas ACTIVE vigentes del usuario en todos los eventos (tope global). */
+  countActiveHolds(userId: string, executor?: Db): Promise<number>;
   /** Libera las reservas vencidas (todas, o solo las de un evento). Devuelve cuántos seats liberó. */
   releaseExpired(eventId?: string, executor?: Db): Promise<number>;
   /** Libera las vencidas del evento y cancela las ACTIVE restantes. Devuelve cuántas canceló. */
@@ -58,6 +76,60 @@ export class KyselyReservationRepository implements ReservationRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return toReservation(row);
+  }
+
+  async createMany(reservations: NewReservation[], ttlMinutes: number, executor: Db = this.db) {
+    if (reservations.length === 0) return [];
+    const rows = await executor
+      .insertInto('reservations')
+      .values(
+        reservations.map((reservation) => ({
+          user_id: reservation.userId,
+          seat_id: reservation.seatId,
+          event_id: reservation.eventId,
+          amount: reservation.amount,
+          expires_at: sql<Date>`now() + make_interval(mins => ${ttlMinutes})`,
+        })),
+      )
+      .returningAll()
+      .execute();
+    return rows.map(toReservation);
+  }
+
+  async lockHoldsOf(userId: string, executor: Db): Promise<void> {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`reservation-holds:${userId}`}, 0))`.execute(
+      executor,
+    );
+  }
+
+  async countHoldsForEvent(userId: string, eventId: string, executor: Db = this.db) {
+    const { count } = await executor
+      .selectFrom('reservations')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('user_id', '=', userId)
+      .where('event_id', '=', eventId)
+      .where((eb) =>
+        eb.or([
+          eb('status', '=', RESERVATION_STATUSES.CONFIRMED),
+          eb.and([
+            eb('status', '=', RESERVATION_STATUSES.ACTIVE),
+            sql<boolean>`expires_at > now()`,
+          ]),
+        ]),
+      )
+      .executeTakeFirstOrThrow();
+    return Number(count);
+  }
+
+  async countActiveHolds(userId: string, executor: Db = this.db) {
+    const { count } = await executor
+      .selectFrom('reservations')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('user_id', '=', userId)
+      .where('status', '=', RESERVATION_STATUSES.ACTIVE)
+      .where(sql<boolean>`expires_at > now()`)
+      .executeTakeFirstOrThrow();
+    return Number(count);
   }
 
   async findForPurchase(id: string) {
@@ -116,16 +188,33 @@ export class KyselyReservationRepository implements ReservationRepository {
   async releaseExpired(eventId?: string, executor: Db = this.db): Promise<number> {
     // Excepción consciente: este repository también modifica `seats`, porque marcar la
     // reserva como vencida y liberar el seat deben ocurrir juntos, en una sola sentencia atómica.
-    // Es idempotente: ejecuciones simultáneas no se pisan (la segunda no encuentra filas ACTIVE).
+    // Sin esperas cruzadas entre ejecuciones simultáneas:
+    //  - las reservas vencidas se toman con `ORDER BY id FOR UPDATE SKIP LOCKED`: las que otra
+    //    transacción ya está liberando se saltan en lugar de esperarse;
+    //  - los seats se bloquean después, por id ascendente, el mismo orden con que los bloquea un
+    //    lote de reservas (`SeatRepository.lockByIds`), así no se cruzan con él.
+    // Es idempotente: una ejecución que llega tarde no encuentra filas ACTIVE vencidas.
     const eventFilter = eventId ? sql`AND event_id = ${eventId}` : sql``;
     const result = await sql`
-      WITH expired AS (
-        UPDATE reservations SET status = ${sql.lit(RESERVATION_STATUSES.EXPIRED)}
+      WITH due AS MATERIALIZED (
+        SELECT id FROM reservations
         WHERE status = ${sql.lit(RESERVATION_STATUSES.ACTIVE)} AND expires_at <= now() ${eventFilter}
+        ORDER BY id
+        FOR UPDATE SKIP LOCKED
+      ),
+      expired AS (
+        UPDATE reservations SET status = ${sql.lit(RESERVATION_STATUSES.EXPIRED)}
+        WHERE id IN (SELECT id FROM due)
         RETURNING seat_id
+      ),
+      locked_seats AS MATERIALIZED (
+        SELECT id FROM seats
+        WHERE id IN (SELECT seat_id FROM expired)
+        ORDER BY id
+        FOR UPDATE
       )
       UPDATE seats SET status = ${sql.lit(SEAT_STATUSES.AVAILABLE)}
-      WHERE id IN (SELECT seat_id FROM expired) AND status = ${sql.lit(SEAT_STATUSES.RESERVED)}
+      WHERE id IN (SELECT id FROM locked_seats) AND status = ${sql.lit(SEAT_STATUSES.RESERVED)}
     `.execute(executor);
     return Number(result.numAffectedRows ?? 0);
   }

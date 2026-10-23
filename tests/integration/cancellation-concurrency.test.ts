@@ -32,7 +32,7 @@ describe('cancellation concurrency', () => {
     request(ctx.app)
       .post('/reservations')
       .set(...bearer(token))
-      .send({ eventId, seat });
+      .send({ eventId, seats: [seat] });
 
   it('lets exactly one of several simultaneous cancellations succeed', async () => {
     const event = await insertEventWithSeats(ctx.db, { capacity: 10 });

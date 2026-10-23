@@ -16,6 +16,24 @@ describe('loadEnv', () => {
     expect(env.SEED_ADMIN_EMAIL).toBeUndefined();
   });
 
+  describe('MAX_ACTIVE_HOLDS_PER_USER', () => {
+    it('defaults to 8', () => {
+      expect(loadEnv(valid).MAX_ACTIVE_HOLDS_PER_USER).toBe(8);
+    });
+
+    it.each(['1', '8'])('accepts %s', (value) => {
+      expect(
+        loadEnv({ ...valid, MAX_ACTIVE_HOLDS_PER_USER: value }).MAX_ACTIVE_HOLDS_PER_USER,
+      ).toBe(Number(value));
+    });
+
+    it.each(['0', '-1', '2.5', 'many'])('rejects %s naming the variable', (value) => {
+      expect(() => loadEnv({ ...valid, MAX_ACTIVE_HOLDS_PER_USER: value })).toThrowError(
+        /MAX_ACTIVE_HOLDS_PER_USER/,
+      );
+    });
+  });
+
   it('fails naming JWT_SECRET when it is missing', () => {
     expect(() => loadEnv({ DATABASE_URL: valid.DATABASE_URL })).toThrowError(/JWT_SECRET/);
   });

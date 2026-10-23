@@ -24,6 +24,8 @@ export const ERROR_DEFINITIONS = {
   RESERVATION_ALREADY_CANCELLED: { status: 409, message: 'Reservation has already been cancelled' },
   RESERVATION_ALREADY_CONFIRMED: { status: 409, message: 'Reservation has already been paid' },
   EVENT_CANCELLED: { status: 409, message: 'Event has been cancelled' },
+  SEAT_LIMIT_REACHED: { status: 409, message: 'Seat limit per user reached for this event' },
+  HOLD_LIMIT_REACHED: { status: 409, message: 'Too many seats on hold. Pay or cancel some first' },
   PAYMENT_REJECTED: { status: 402, message: 'Payment was rejected. Try another card' },
   CARD_PROBLEM: { status: 422, message: 'The card has problems, use another payment method' },
   PAYMENT_GATEWAY_ERROR: { status: 502, message: 'Payment service error, please try again' },

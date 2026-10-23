@@ -4,6 +4,7 @@ import { isUniqueViolation } from '../../shared/utils/db-errors.js';
 import { EVENT_STATUSES } from '../events/event.types.js';
 import type { EventService } from '../events/event.service.js';
 import { parseSeatLabel } from '../seats/seat-label.js';
+import { SEAT_STATUSES, type Seat, type SeatPosition } from '../seats/seat.types.js';
 import type { SeatService } from '../seats/seat.service.js';
 import type { ReservationRepository } from './reservation.repository.js';
 import {
@@ -35,31 +36,74 @@ export class ReservationService {
     private readonly events: EventService,
     private readonly db: Db,
     private readonly ttlMinutes: number,
+    private readonly maxActiveHolds: number,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  /**
+   * Crea un lote de reservas (todas o ninguna) con el mismo vencimiento. Orden de validaciones:
+   * evento activo, seats existentes, límite del evento, tope global y, al final, disponibilidad.
+   */
   async create(
     userId: string,
-    input: { eventId: string; seat: string },
-  ): Promise<PublicReservation> {
-    // 1. El evento se valida antes que el seat: un evento cancelado tiene sus seats BLOQUEADOS
+    input: { eventId: string; seats: string[] },
+  ): Promise<PublicReservation[]> {
+    // 1. El evento se valida antes que los seats: un evento cancelado tiene sus seats BLOQUEADOS
     const event = await this.events.getById(input.eventId); // 404 EVENT_NOT_FOUND
     if (event.status !== EVENT_STATUSES.ACTIVE || event.startDate <= this.now()) {
       throw new AppError('EVENT_NOT_ACTIVE');
     }
 
-    // 2. El seat se busca dentro de ese evento
-    const position = parseSeatLabel(input.seat);
-    const seat = position ? await this.seats.findByEventAndLabel(event.id, position) : null;
-    if (!seat) throw new AppError('SEAT_NOT_FOUND');
+    // 2. Todos los seats existen en ese evento (una sola consulta)
+    const positions = input.seats.map((label) => parseSeatLabel(label));
+    if (positions.some((position) => position === null)) throw new AppError('SEAT_NOT_FOUND');
+    const found = await this.seats.findByEventAndLabels(event.id, positions as SeatPosition[]);
+    const byLabel = new Map(found.map((seat) => [`${seat.row}${seat.number}`, seat]));
+    if (input.seats.some((label) => !byLabel.has(label))) throw new AppError('SEAT_NOT_FOUND');
+    const requested = input.seats.map((label) => byLabel.get(label) as Seat);
 
-    // 3. Liberar vencidas, marcar el seat e insertar la reserva: todo o nada
-    const reservation = await this.db.transaction().execute(async (trx) => {
+    // 3. Todo el resto ocurre en una transacción, bajo el bloqueo del usuario
+    const created = await this.db.transaction().execute(async (trx) => {
+      await this.reservations.lockHoldsOf(userId, trx);
       await this.reservations.releaseExpired(event.id, trx);
-      if (!(await this.seats.markReserved(seat.id, trx))) throw new AppError('SEAT_NOT_AVAILABLE');
+
+      const heldInEvent = await this.reservations.countHoldsForEvent(userId, event.id, trx);
+      if (heldInEvent + requested.length > event.maxSeatsPerUser) {
+        throw new AppError(
+          'SEAT_LIMIT_REACHED',
+          `You can hold up to ${event.maxSeatsPerUser} seats for this event`,
+        );
+      }
+      const activeHolds = await this.reservations.countActiveHolds(userId, trx);
+      if (activeHolds + requested.length > this.maxActiveHolds) {
+        throw new AppError('HOLD_LIMIT_REACHED');
+      }
+
+      // Bloqueo en orden de id y comprobación de disponibilidad con el estado ya bloqueado
+      const ids = requested.map((seat) => seat.id);
+      const locked = await this.seats.lockByIds(ids, trx);
+      const taken = locked.filter((seat) => seat.status !== SEAT_STATUSES.AVAILABLE);
+      if (taken.length > 0 || locked.length !== requested.length) {
+        // En el orden en que se pidieron, no en el de bloqueo
+        const takenIds = new Set(taken.map((seat) => seat.id));
+        const labels = requested
+          .filter((seat) => takenIds.has(seat.id))
+          .map((seat) => `${seat.row}${seat.number}`)
+          .join(', ');
+        throw new AppError('SEAT_NOT_AVAILABLE', `Seats not available: ${labels || 'unknown'}`);
+      }
+      if ((await this.seats.markReservedMany(ids, trx)) !== ids.length) {
+        throw new AppError('SEAT_NOT_AVAILABLE');
+      }
+
       try {
-        return await this.reservations.create(
-          { userId, seatId: seat.id, eventId: event.id, amount: event.price },
+        return await this.reservations.createMany(
+          requested.map((seat) => ({
+            userId,
+            seatId: seat.id,
+            eventId: event.id,
+            amount: event.price,
+          })),
           this.ttlMinutes,
           trx,
         );
@@ -69,7 +113,12 @@ export class ReservationService {
         throw error;
       }
     });
-    return toPublicReservation(reservation, `${seat.row}${seat.number}`);
+
+    // 4. La respuesta sigue el orden de la solicitud
+    const bySeatId = new Map(created.map((reservation) => [reservation.seatId, reservation]));
+    return requested.map((seat) =>
+      toPublicReservation(bySeatId.get(seat.id) as Reservation, `${seat.row}${seat.number}`),
+    );
   }
 
   async getForOwner(userId: string, id: string): Promise<PublicReservation> {

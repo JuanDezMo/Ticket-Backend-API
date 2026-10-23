@@ -52,4 +52,77 @@ describe('KyselySeatRepository', () => {
     const event = await insertEvent(ctx.db);
     await expect(repo.insertMany(event.id, [])).resolves.toBeUndefined();
   });
+
+  describe('operations for reserving several seats', () => {
+    const positions = [
+      { row: 'A', number: 3 },
+      { row: 'B', number: 1 },
+      { row: 'A', number: 1 },
+    ];
+
+    it('finds several seats of one event in a single query and ignores the missing ones', async () => {
+      const event = await insertEvent(ctx.db, { capacity: 20 });
+      const other = await insertEvent(ctx.db, { capacity: 20 });
+      await repo.insertMany(event.id, generateSeatLayout(15));
+      await repo.insertMany(other.id, generateSeatLayout(20));
+
+      const found = await repo.findByEventAndPositions(event.id, [
+        ...positions,
+        { row: 'B', number: 10 },
+      ]);
+
+      // B10 no existe en un evento de 15 seats
+      expect(found.map((seat) => `${seat.row}${seat.number}`).sort()).toEqual(['A1', 'A3', 'B1']);
+      expect(found.every((seat) => seat.eventId === event.id)).toBe(true);
+    });
+
+    it('returns an empty list for no positions', async () => {
+      const event = await insertEvent(ctx.db);
+      expect(await repo.findByEventAndPositions(event.id, [])).toEqual([]);
+    });
+
+    it('locks the seats in ascending id order whatever order they are requested in', async () => {
+      const event = await insertEvent(ctx.db, { capacity: 10 });
+      await repo.insertMany(event.id, generateSeatLayout(10));
+      const all = await repo.findByEvent(event.id);
+      const requested = all.map((seat) => seat.id).reverse();
+
+      const locked = await ctx.db.transaction().execute((trx) => repo.lockByIds(requested, trx));
+
+      const ids = locked.map((seat) => seat.id);
+      expect(ids).toEqual([...ids].sort());
+      expect(ids).toHaveLength(10);
+    });
+
+    it('marks several seats as RESERVED at once and leaves the occupied ones alone', async () => {
+      const event = await insertEvent(ctx.db, { capacity: 10 });
+      await repo.insertMany(event.id, generateSeatLayout(10));
+      const [a, b, c] = await repo.findByEvent(event.id);
+      await ctx.db.updateTable('seats').set({ status: 'SOLD' }).where('id', '=', c!.id).execute();
+
+      const changed = await ctx.db
+        .transaction()
+        .execute((trx) => repo.markReservedMany([a!.id, b!.id, c!.id], trx));
+
+      expect(changed).toBe(2);
+      const after = await repo.findByEvent(event.id);
+      expect(after.slice(0, 3).map((seat) => seat.status)).toEqual([
+        'RESERVED',
+        'RESERVED',
+        'SOLD',
+      ]);
+    });
+
+    it('marks 8 seats at once', async () => {
+      const event = await insertEvent(ctx.db, { capacity: 10 });
+      await repo.insertMany(event.id, generateSeatLayout(10));
+      const eight = (await repo.findByEvent(event.id)).slice(0, 8).map((seat) => seat.id);
+
+      const changed = await ctx.db
+        .transaction()
+        .execute((trx) => repo.markReservedMany(eight, trx));
+
+      expect(changed).toBe(8);
+    });
+  });
 });

@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { isUniqueViolation } from '../../src/shared/utils/db-errors.js';
 import { createUserAndLogin } from '../helpers/auth.js';
@@ -64,5 +65,18 @@ describe('reservations schema', () => {
     await insert();
     await ctx.db.deleteFrom('events').execute();
     expect(await ctx.db.selectFrom('reservations').selectAll().execute()).toHaveLength(0);
+  });
+
+  it('has the partial indexes used to count the holds of a user', async () => {
+    const rows = await sql<{ indexname: string; indexdef: string }>`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE tablename = 'reservations'
+        AND indexname IN ('reservations_user_event_hold_idx', 'reservations_user_active_idx')
+    `.execute(ctx.db);
+    const byName = Object.fromEntries(rows.rows.map((r) => [r.indexname, r.indexdef]));
+    expect(byName['reservations_user_event_hold_idx']).toMatch(/\(user_id, event_id\)/);
+    expect(byName['reservations_user_event_hold_idx']).toMatch(/ACTIVE.*CONFIRMED/);
+    expect(byName['reservations_user_active_idx']).toMatch(/\(user_id\)/);
+    expect(byName['reservations_user_active_idx']).toMatch(/status = 'ACTIVE'/);
   });
 });

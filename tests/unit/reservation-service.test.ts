@@ -38,23 +38,27 @@ type Found = { reservation: Omit<typeof stored, 'status'> & { status: string }; 
 function setup(
   overrides: {
     event?: Event;
-    seat?: Seat | null;
-    reserved?: boolean;
+    seats?: Seat[];
+    lockedSeats?: Seat[];
+    markedCount?: number;
     found?: Found | null;
     seatById?: Seat | null;
     locked?: Found['reservation'] | null;
     cancelled?: boolean;
+    heldInEvent?: number;
+    activeHolds?: number;
+    maxActiveHolds?: number;
   } = {},
 ) {
   const events = {
     getById: vi.fn().mockResolvedValue(overrides.event ?? event),
     findForShare: vi.fn().mockResolvedValue(overrides.event ?? event),
   };
+  const found = overrides.seats ?? [seat];
   const seats = {
-    findByEventAndLabel: vi
-      .fn()
-      .mockResolvedValue(overrides.seat === undefined ? seat : overrides.seat),
-    markReserved: vi.fn().mockResolvedValue(overrides.reserved ?? true),
+    findByEventAndLabels: vi.fn().mockResolvedValue(found),
+    lockByIds: vi.fn().mockResolvedValue(overrides.lockedSeats ?? found),
+    markReservedMany: vi.fn().mockResolvedValue(overrides.markedCount ?? found.length),
     releaseReserved: vi.fn().mockResolvedValue(true),
     findById: vi
       .fn()
@@ -68,6 +72,14 @@ function setup(
     markConfirmed: vi.fn().mockResolvedValue(true),
     markCancelledByUser: vi.fn().mockResolvedValue(overrides.cancelled ?? true),
     create: vi.fn().mockResolvedValue(stored),
+    createMany: vi
+      .fn()
+      .mockImplementation(async (items: { seatId: string }[]) =>
+        items.map((item, index) => ({ ...stored, id: `res-${index + 1}`, seatId: item.seatId })),
+      ),
+    lockHoldsOf: vi.fn().mockResolvedValue(undefined),
+    countHoldsForEvent: vi.fn().mockResolvedValue(overrides.heldInEvent ?? 0),
+    countActiveHolds: vi.fn().mockResolvedValue(overrides.activeHolds ?? 0),
   } satisfies ReservationRepository;
   const trx = {};
   const transaction = vi.fn(() => ({ execute: (cb: (t: unknown) => unknown) => cb(trx) }));
@@ -78,68 +90,192 @@ function setup(
     events as never,
     db as unknown as Db,
     10,
+    overrides.maxActiveHolds ?? 8,
     () => NOW,
   );
   return { service, events, seats, repo, trx, transaction };
 }
 
+const seatOf = (number: number): Seat => ({
+  id: `seat-${number}`,
+  eventId: 'event-1',
+  row: 'C',
+  number,
+  status: 'AVAILABLE',
+});
+const batch = (count: number) => Array.from({ length: count }, (_, i) => seatOf(i + 1));
+const labelsOf = (seats: Seat[]) => seats.map((s) => `${s.row}${s.number}`);
+const request = (seats: Seat[]) => ({ eventId: 'event-1', seats: labelsOf(seats) });
+
 describe('ReservationService.create', () => {
   it('reserves the seat using the event price and returns the label', async () => {
     const { service, repo, seats, trx } = setup();
-    const result = await service.create('user-1', { eventId: 'event-1', seat: 'C7' });
-    expect(result).toMatchObject({
-      seat: 'C7',
-      seatId: 'seat-1',
-      amount: 150000,
-      status: 'ACTIVE',
-    });
+    const result = await service.create('user-1', { eventId: 'event-1', seats: ['C7'] });
+    expect(result).toEqual([
+      expect.objectContaining({ seat: 'C7', seatId: 'seat-1', amount: 150000, status: 'ACTIVE' }),
+    ]);
+    expect(repo.lockHoldsOf).toHaveBeenCalledWith('user-1', trx);
     expect(repo.releaseExpired).toHaveBeenCalledWith('event-1', trx);
-    expect(seats.markReserved).toHaveBeenCalledWith('seat-1', trx);
-    expect(repo.create).toHaveBeenCalledWith(
-      { userId: 'user-1', seatId: 'seat-1', eventId: 'event-1', amount: 150000 },
+    expect(seats.lockByIds).toHaveBeenCalledWith(['seat-1'], trx);
+    expect(seats.markReservedMany).toHaveBeenCalledWith(['seat-1'], trx);
+    expect(repo.createMany).toHaveBeenCalledWith(
+      [{ userId: 'user-1', seatId: 'seat-1', eventId: 'event-1', amount: 150000 }],
       10,
       trx,
     );
   });
 
-  it('checks the event before the seat: a cancelled event answers EVENT_NOT_ACTIVE', async () => {
-    const { service, seats } = setup({ event: { ...event, status: 'CANCELLED' }, reserved: false });
-    await expect(service.create('u', { eventId: 'event-1', seat: 'C7' })).rejects.toMatchObject({
+  it('takes the user lock before counting and counting before reserving', async () => {
+    const { service, repo, seats } = setup();
+    await service.create('user-1', { eventId: 'event-1', seats: ['C7'] });
+    const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+      fn.mock.invocationCallOrder[0]!;
+    expect(order(repo.lockHoldsOf)).toBeLessThan(order(repo.countHoldsForEvent));
+    expect(order(repo.countHoldsForEvent)).toBeLessThan(order(repo.countActiveHolds));
+    expect(order(repo.countActiveHolds)).toBeLessThan(order(seats.lockByIds));
+    expect(order(seats.markReservedMany)).toBeLessThan(order(repo.createMany));
+  });
+
+  it.each([1, 3, 8])('reserves a batch of %i seats in the requested order', async (size) => {
+    const seats = batch(size);
+    const { service, repo } = setup({
+      seats: [...seats].reverse(),
+      event: { ...event, maxSeatsPerUser: 8 },
+    });
+    const result = await service.create('user-1', request(seats));
+    expect(result.map((r) => r.seat)).toEqual(labelsOf(seats));
+    expect(repo.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks the event before the seats: a cancelled event answers EVENT_NOT_ACTIVE', async () => {
+    const { service, seats } = setup({ event: { ...event, status: 'CANCELLED' } });
+    await expect(service.create('u', { eventId: 'event-1', seats: ['C7'] })).rejects.toMatchObject({
       code: 'EVENT_NOT_ACTIVE',
     });
-    expect(seats.findByEventAndLabel).not.toHaveBeenCalled();
+    expect(seats.findByEventAndLabels).not.toHaveBeenCalled();
   });
 
   it('rejects an event that already started', async () => {
     const { service } = setup({ event: { ...event, startDate: new Date('2026-05-01T00:00:00Z') } });
-    await expect(service.create('u', { eventId: 'event-1', seat: 'C7' })).rejects.toMatchObject({
+    await expect(service.create('u', { eventId: 'event-1', seats: ['C7'] })).rejects.toMatchObject({
       code: 'EVENT_NOT_ACTIVE',
     });
   });
 
-  it('answers SEAT_NOT_FOUND when the label does not exist in the event', async () => {
-    const { service, repo } = setup({ seat: null });
-    await expect(service.create('u', { eventId: 'event-1', seat: 'C7' })).rejects.toMatchObject({
-      code: 'SEAT_NOT_FOUND',
-    });
-    expect(repo.create).not.toHaveBeenCalled();
+  it('answers SEAT_NOT_FOUND when any label does not exist and reserves nothing', async () => {
+    const { service, repo, transaction } = setup({ seats: [seatOf(7)] });
+    await expect(
+      service.create('u', { eventId: 'event-1', seats: ['C7', 'C8'] }),
+    ).rejects.toMatchObject({ code: 'SEAT_NOT_FOUND' });
+    expect(transaction).not.toHaveBeenCalled();
+    expect(repo.createMany).not.toHaveBeenCalled();
   });
 
-  it('answers SEAT_NOT_AVAILABLE and creates nothing when the seat was not AVAILABLE', async () => {
-    const { service, repo } = setup({ reserved: false });
-    await expect(service.create('u', { eventId: 'event-1', seat: 'C7' })).rejects.toMatchObject({
+  describe('limit per event', () => {
+    it.each([
+      // [límite, ya tiene, pide, ¿pasa?]
+      [1, 0, 1, true],
+      [1, 1, 1, false],
+      [8, 0, 8, true],
+      [8, 7, 1, true],
+      [8, 8, 1, false],
+      [4, 3, 1, true],
+      [4, 3, 2, false],
+      [4, 4, 1, false],
+    ])('limit %i with %i held and %i requested: allowed=%s', async (limit, held, asked, ok) => {
+      const seats = batch(asked);
+      const { service, repo } = setup({
+        event: { ...event, maxSeatsPerUser: limit },
+        seats,
+        heldInEvent: held,
+      });
+      const call = service.create('u', request(seats));
+      if (ok) {
+        await expect(call).resolves.toHaveLength(asked);
+      } else {
+        await expect(call).rejects.toMatchObject({ code: 'SEAT_LIMIT_REACHED', status: 409 });
+        expect(repo.createMany).not.toHaveBeenCalled();
+      }
+    });
+
+    it('names the limit of the event in the message', async () => {
+      const { service } = setup({ event: { ...event, maxSeatsPerUser: 3 }, heldInEvent: 3 });
+      await expect(service.create('u', { eventId: 'event-1', seats: ['C7'] })).rejects.toThrow(
+        'You can hold up to 3 seats for this event',
+      );
+    });
+  });
+
+  describe('global cap on active holds', () => {
+    it.each([
+      // [tope, ya tiene, pide, ¿pasa?]
+      [1, 0, 1, true],
+      [1, 1, 1, false],
+      [8, 7, 1, true],
+      [8, 8, 1, false],
+      [3, 0, 4, false],
+    ])('cap %i with %i active and %i requested: allowed=%s', async (cap, active, asked, ok) => {
+      const seats = batch(asked);
+      const { service } = setup({
+        event: { ...event, maxSeatsPerUser: 8 },
+        seats,
+        maxActiveHolds: cap,
+        activeHolds: active,
+      });
+      const call = service.create('u', request(seats));
+      if (ok) await expect(call).resolves.toHaveLength(asked);
+      else await expect(call).rejects.toMatchObject({ code: 'HOLD_LIMIT_REACHED', status: 409 });
+    });
+  });
+
+  it('answers SEAT_LIMIT_REACHED before SEAT_NOT_AVAILABLE and HOLD_LIMIT_REACHED after the first', async () => {
+    const taken = { ...seat, status: 'RESERVED' as const };
+    const both = setup({ lockedSeats: [taken], heldInEvent: 4, activeHolds: 8 });
+    await expect(
+      both.service.create('u', { eventId: 'event-1', seats: ['C7'] }),
+    ).rejects.toMatchObject({ code: 'SEAT_LIMIT_REACHED' });
+    const holdOnly = setup({ lockedSeats: [taken], activeHolds: 8 });
+    await expect(
+      holdOnly.service.create('u', { eventId: 'event-1', seats: ['C7'] }),
+    ).rejects.toMatchObject({ code: 'HOLD_LIMIT_REACHED' });
+    expect(holdOnly.seats.lockByIds).not.toHaveBeenCalled();
+  });
+
+  it('answers SEAT_NOT_AVAILABLE naming the taken seats and reserves none', async () => {
+    const seats = batch(3);
+    const locked = [seats[0]!, { ...seats[1]!, status: 'SOLD' as const }, seats[2]!];
+    const { service, seats: seatService, repo } = setup({ seats, lockedSeats: locked });
+    await expect(service.create('u', request(seats))).rejects.toMatchObject({
       code: 'SEAT_NOT_AVAILABLE',
       status: 409,
+      message: 'Seats not available: C2',
     });
-    expect(repo.create).not.toHaveBeenCalled();
+    expect(seatService.markReservedMany).not.toHaveBeenCalled();
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it('answers SEAT_NOT_AVAILABLE when marking the seats changes fewer rows than requested', async () => {
+    const { service, repo } = setup({ markedCount: 0 });
+    await expect(service.create('u', { eventId: 'event-1', seats: ['C7'] })).rejects.toMatchObject({
+      code: 'SEAT_NOT_AVAILABLE',
+    });
+    expect(repo.createMany).not.toHaveBeenCalled();
   });
 
   it('translates a unique-index violation into SEAT_NOT_AVAILABLE', async () => {
     const { service, repo } = setup();
-    repo.create.mockRejectedValueOnce(Object.assign(new Error('dup'), { code: '23505' }));
-    await expect(service.create('u', { eventId: 'event-1', seat: 'C7' })).rejects.toMatchObject({
+    repo.createMany.mockRejectedValueOnce(Object.assign(new Error('dup'), { code: '23505' }));
+    await expect(service.create('u', { eventId: 'event-1', seats: ['C7'] })).rejects.toMatchObject({
       code: 'SEAT_NOT_AVAILABLE',
     });
+  });
+
+  it('lets any other repository error through untouched', async () => {
+    const { service, repo } = setup();
+    repo.createMany.mockRejectedValueOnce(new Error('insert failed'));
+    await expect(service.create('u', { eventId: 'event-1', seats: ['C7'] })).rejects.toThrow(
+      'insert failed',
+    );
   });
 });
 
@@ -152,7 +288,7 @@ describe('ReservationService.getForOwner', () => {
   const expectNoWrites = ({ repo, seats }: ReturnType<typeof setup>) => {
     expect(repo.releaseExpired).not.toHaveBeenCalled();
     expect(repo.markConfirmed).not.toHaveBeenCalled();
-    expect(seats.markReserved).not.toHaveBeenCalled();
+    expect(seats.markReservedMany).not.toHaveBeenCalled();
   };
 
   it('returns an ACTIVE reservation that has not expired, with the seat label', async () => {

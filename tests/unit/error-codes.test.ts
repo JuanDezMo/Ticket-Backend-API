@@ -19,6 +19,8 @@ describe('reservation and cancellation error codes', () => {
     ['PAYMENT_GATEWAY_ERROR', 502, 'Payment service error, please try again'],
     ['PAYMENT_GATEWAY_TIMEOUT', 504, 'Payment service timed out, please try again'],
     ['EVENT_ALREADY_ENDED', 409, 'Event has already ended'],
+    ['SEAT_LIMIT_REACHED', 409, 'Seat limit per user reached for this event'],
+    ['HOLD_LIMIT_REACHED', 409, 'Too many seats on hold. Pay or cancel some first'],
   ] as const)('%s maps to HTTP %i with an English message', (code, status, message) => {
     const error = new AppError(code);
     expect(error.status).toBe(status);

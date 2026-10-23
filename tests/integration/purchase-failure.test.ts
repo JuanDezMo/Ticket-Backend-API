@@ -46,7 +46,7 @@ describe('unexpected failure while issuing the ticket after the charge', () => {
     const events = new EventService(new KyselyEventRepository(ctx.db), seats, ctx.db);
     const service = new TicketService(
       new FailingTicketRepository(ctx.db),
-      new ReservationService(new KyselyReservationRepository(ctx.db), seats, events, ctx.db, 10),
+      new ReservationService(new KyselyReservationRepository(ctx.db), seats, events, ctx.db, 10, 8),
       events,
       seats,
       new PaymentService(gateway, new KyselyPaymentRepository(ctx.db), logger),

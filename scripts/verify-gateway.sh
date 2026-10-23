@@ -68,7 +68,7 @@ new_reservation() {
   curl -s -o /dev/null -X POST "$1/auth/register" -H "$J" -d "{\"email\":\"$EMAIL\",\"password\":\"password-123\"}"
   USR=$(curl -s -X POST "$1/auth/login" -H "$J" -d "{\"email\":\"$EMAIL\",\"password\":\"password-123\"}" | field accessToken)
   RID=$(curl -s -X POST "$1/reservations" -H "Authorization: Bearer $USR" -H "$J" \
-    -d "{\"eventId\":\"$2\",\"seat\":\"$3\"}" | field id)
+    -d "{\"eventId\":\"$2\",\"seats\":[\"$3\"]}" | field reservations[0].id)
 }
 
 # pay <api> <cardJson>  -> define HTTP, CODE (code o status) y BODY

@@ -26,8 +26,8 @@ describe('ReservationExpiryJob (real timer, 1 s interval)', () => {
     const reserved = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(token))
-      .send({ eventId: event.id, seat: 'A1' });
-    await expireReservations(ctx.db, reserved.body.seatId);
+      .send({ eventId: event.id, seats: ['A1'] });
+    await expireReservations(ctx.db, reserved.body.reservations[0].seatId);
 
     ctx.container.reservationExpiryJob.start();
     await sleep(2500); // al menos una ejecución del job
@@ -35,7 +35,7 @@ describe('ReservationExpiryJob (real timer, 1 s interval)', () => {
     const reservation = await ctx.db
       .selectFrom('reservations')
       .select('status')
-      .where('id', '=', reserved.body.id)
+      .where('id', '=', reserved.body.reservations[0].id)
       .executeTakeFirstOrThrow();
     expect(reservation.status).toBe('EXPIRED');
     expect((await seatOf(ctx.db, event.id, 'A', 1)).status).toBe('AVAILABLE');

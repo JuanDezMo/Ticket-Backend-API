@@ -43,7 +43,7 @@ describe('reservations end to end', () => {
       request(ctx.app)
         .post('/reservations')
         .set(...bearer(token))
-        .send({ eventId, seat });
+        .send({ eventId, seats: [seat] });
     const available = async () =>
       (
         await request(ctx.app)
@@ -56,12 +56,12 @@ describe('reservations end to end', () => {
 
     const first = await reserve(ana, 'A1');
     expect(first.status).toBe(201);
-    expect(first.body.amount).toBe(80000);
+    expect(first.body.reservations[0].amount).toBe(80000);
     expect(await available()).toBe(19);
     const detail = async () =>
       (
         await request(ctx.app)
-          .get(`/reservations/${first.body.id}`)
+          .get(`/reservations/${first.body.reservations[0].id}`)
           .set(...bearer(ana))
       ).body.status;
     expect(await detail()).toBe('ACTIVE');
@@ -70,7 +70,7 @@ describe('reservations end to end', () => {
     expect(taken.status).toBe(409);
     expect(taken.body.code).toBe('SEAT_NOT_AVAILABLE');
 
-    await expireReservations(ctx.db, first.body.seatId);
+    await expireReservations(ctx.db, first.body.reservations[0].seatId);
     expect(await available()).toBe(20); // el listado libera la reserva vencida
     expect(await detail()).toBe('EXPIRED');
 
@@ -80,7 +80,7 @@ describe('reservations end to end', () => {
 
     // luis se arrepiente: cancela, el seat se libera al instante y ana lo vuelve a reservar
     const cancelled = await request(ctx.app)
-      .post(`/reservations/${second.body.id}/cancel`)
+      .post(`/reservations/${second.body.reservations[0].id}/cancel`)
       .set(...bearer(luis));
     expect(cancelled.status).toBe(200);
     expect(cancelled.body.status).toBe('CANCELLED_BY_USER');

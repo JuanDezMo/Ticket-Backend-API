@@ -45,13 +45,13 @@ describe('ticket purchase end to end', () => {
     const reservation = await request(ctx.app)
       .post('/reservations')
       .set(...bearer(ana))
-      .send({ eventId, seat: 'A1' });
+      .send({ eventId, seats: ['A1'] });
     expect(reservation.status).toBe(201);
     const pay = () =>
       request(ctx.app)
         .post('/tickets/purchase')
         .set(...bearer(ana))
-        .send(purchaseBody(reservation.body.id, CARD));
+        .send(purchaseBody(reservation.body.reservations[0].id, CARD));
 
     // 1. tarjeta rechazada: no hay ticket y la reserva sigue activa
     gateway.respond(402, gatewayExamples.rejected);

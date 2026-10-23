@@ -14,6 +14,8 @@ const envSchema = z.object({
   PAYMENT_GATEWAY_API_KEY: z.string().min(1),
   PAYMENT_GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   RESERVATION_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  // Reservas ACTIVE vigentes que un usuario puede tener a la vez, sumando todos los eventos
+  MAX_ACTIVE_HOLDS_PER_USER: z.coerce.number().int().min(1).default(8),
   RESERVATION_EXPIRY_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 });
 

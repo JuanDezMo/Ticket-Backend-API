@@ -28,7 +28,7 @@ describe('ReservationService transaction', () => {
     const event = await insertEventWithSeats(ctx.db, { capacity: 10 });
 
     class FailingRepository extends KyselyReservationRepository {
-      override async create(): Promise<never> {
+      override async createMany(): Promise<never> {
         throw new Error('insert failed');
       }
     }
@@ -39,9 +39,10 @@ describe('ReservationService transaction', () => {
       new EventService(new KyselyEventRepository(ctx.db), seats, ctx.db),
       ctx.db,
       10,
+      8,
     );
 
-    await expect(service.create(userId, { eventId: event.id, seat: 'A1' })).rejects.toThrow(
+    await expect(service.create(userId, { eventId: event.id, seats: ['A1'] })).rejects.toThrow(
       'insert failed',
     );
     expect((await seatOf(ctx.db, event.id, 'A', 1)).status).toBe('AVAILABLE');

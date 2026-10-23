@@ -109,6 +109,11 @@ Cualquier estado --evento cancelado--> BLOCKED
 | RN-RES-7 | La compra siempre valida `expires_at > now()`; si no se cumple, responde `RESERVATION_EXPIRED`. La corrección no depende de que el job haya corrido. |
 | RN-RES-8 | Un USER puede consultar solo sus propias reservas; una reserva `ACTIVE` con `expires_at <= now()` se informa como `EXPIRED` sin modificarla. |
 | RN-RES-9 | El dueño puede cancelar su reserva `ACTIVE` y vigente con `POST /reservations/:id/cancel`. La reserva pasa a `CANCELLED_BY_USER` y el seat a `AVAILABLE` en una sola transacción. Si no se puede cancelar, se responde `409` con un código según el estado: `RESERVATION_ALREADY_CANCELLED`, `RESERVATION_ALREADY_CONFIRMED`, `RESERVATION_EXPIRED` o `EVENT_CANCELLED`. |
+| RN-RES-10 | Se reservan de 1 a 8 seats en una sola solicitud (`seats`): todas las reservas se crean juntas, todo o nada, con el mismo `created_at` y `expires_at`. Una solicitud posterior crea un lote nuevo con su propio vencimiento; nada renueva ni extiende reservas existentes. |
+| RN-RES-11 | **Límite por evento:** reservas `ACTIVE` vigentes + `CONFIRMED` del usuario en el evento + los seats solicitados no pueden superar `maxSeatsPerUser` del evento (`409 SEAT_LIMIT_REACHED`). No cuentan las `EXPIRED`, `CANCELLED`, `CANCELLED_BY_USER` ni una `ACTIVE` ya vencida. Un ticket comprado cuenta (su reserva está `CONFIRMED`). |
+| RN-RES-12 | **Tope global:** un usuario no puede tener más de `MAX_ACTIVE_HOLDS_PER_USER` (8 por defecto) reservas `ACTIVE` vigentes a la vez, sumando todos los eventos (`409 HOLD_LIMIT_REACHED`). Lo ya comprado no cuenta. |
+| RN-RES-13 | Orden de las validaciones al reservar: acceso, formato, evento existente, evento activo y no iniciado, seats existentes, límite del evento, tope global y, al final, disponibilidad de los seats. |
+| RN-RES-14 | El conteo y la creación ocurren en la misma transacción, bajo un bloqueo por usuario tomado antes de contar, y los seats se bloquean por id ascendente: solicitudes simultáneas nunca superan los límites ni se bloquean entre sí. |
 
 ## 6. Compra de tickets
 
