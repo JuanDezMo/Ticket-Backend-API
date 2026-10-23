@@ -77,6 +77,12 @@ function setup(
       .mockImplementation(async (items: { seatId: string }[]) =>
         items.map((item, index) => ({ ...stored, id: `res-${index + 1}`, seatId: item.seatId })),
       ),
+    findManyForPurchase: vi.fn().mockResolvedValue([]),
+    lockManyByIds: vi.fn().mockResolvedValue([]),
+    markConfirmedMany: vi.fn().mockResolvedValue(0),
+    attachToOrder: vi.fn().mockResolvedValue(undefined),
+    claimForPayment: vi.fn().mockResolvedValue(true),
+    releaseClaim: vi.fn().mockResolvedValue(undefined),
     lockHoldsOf: vi.fn().mockResolvedValue(undefined),
     countHoldsForEvent: vi.fn().mockResolvedValue(overrides.heldInEvent ?? 0),
     countActiveHolds: vi.fn().mockResolvedValue(overrides.activeHolds ?? 0),

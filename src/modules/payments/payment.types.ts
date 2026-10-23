@@ -16,6 +16,7 @@ export interface CardData {
 }
 
 export interface ChargeRequest {
+  /** Identificador del conjunto exacto de reservas que se paga (la pasarela es idempotente solo por este id). */
   reservationId: string;
   amount: number;
   card: CardData;
@@ -32,9 +33,7 @@ export type GatewayResult =
   | { kind: 'timeout' };
 
 export interface NewPayment {
-  reservationId: string;
-  userId: string;
-  eventId: string;
+  orderId: string;
   transactionId: string;
   amount: number;
   status: PaymentStatus;

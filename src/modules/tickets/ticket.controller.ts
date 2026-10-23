@@ -8,12 +8,9 @@ export class TicketController {
 
   purchase = async (req: Request, res: Response): Promise<void> => {
     // La identidad sale del token, nunca del cuerpo
-    const { ticket, created } = await this.ticketService.purchase(
-      req.auth!.userId,
-      req.body as PurchaseBody,
-    );
-    // 201 al emitir; 200 si la reserva ya tenía ticket (repetición idempotente)
-    res.status(created ? 201 : 200).json(ticket);
+    const result = await this.ticketService.purchase(req.auth!.userId, req.body as PurchaseBody);
+    // Siempre 201: repetir una compra ya pagada responde 409 DUPLICATE_PAYMENT
+    res.status(201).json(result);
   };
 
   listMine = async (req: Request, res: Response): Promise<void> => {

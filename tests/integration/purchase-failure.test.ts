@@ -2,6 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { KyselyEventRepository } from '../../src/modules/events/event.repository.js';
 import { EventService } from '../../src/modules/events/event.service.js';
 import type { PaymentGateway } from '../../src/modules/payments/payment-gateway.js';
+import { KyselyOrderRepository } from '../../src/modules/orders/order.repository.js';
+import { OrderService } from '../../src/modules/orders/order.service.js';
 import { KyselyPaymentRepository } from '../../src/modules/payments/payment.repository.js';
 import { PaymentService } from '../../src/modules/payments/payment.service.js';
 import { KyselyReservationRepository } from '../../src/modules/reservations/reservation.repository.js';
@@ -34,7 +36,7 @@ describe('unexpected failure while issuing the ticket after the charge', () => {
     ).user_id;
 
     class FailingTicketRepository extends KyselyTicketRepository {
-      override async create(): Promise<{ id: string }> {
+      override async createMany(): Promise<void> {
         throw new Error('ticket insert failed');
       }
     }
@@ -50,12 +52,14 @@ describe('unexpected failure while issuing the ticket after the charge', () => {
       events,
       seats,
       new PaymentService(gateway, new KyselyPaymentRepository(ctx.db), logger),
+      new OrderService(new KyselyOrderRepository(ctx.db)),
       ctx.db,
       logger,
+      30,
     );
 
     await expect(
-      service.purchase(userId, { reservationId: reservation.id, card: CARD }),
+      service.purchase(userId, { reservationIds: [reservation.id], card: CARD }),
     ).rejects.toThrow('ticket insert failed');
 
     const reservationRow = await ctx.db

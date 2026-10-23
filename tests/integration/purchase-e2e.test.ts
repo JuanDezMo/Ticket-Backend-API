@@ -70,7 +70,9 @@ describe('ticket purchase end to end', () => {
     gateway.respond(200, gatewayExamples.approved);
     const ok = await pay();
     expect(ok.status).toBe(201);
-    expect(ok.body).toMatchObject({
+    expect(ok.body).toMatchObject({ orderId: expect.any(String), amount: 80000 });
+    expect(ok.body.tickets).toHaveLength(1);
+    expect(ok.body.tickets[0]).toMatchObject({
       seat: 'A1',
       status: 'ISSUED',
       amount: 80000,
@@ -82,13 +84,17 @@ describe('ticket purchase end to end', () => {
       .get('/tickets/me')
       .set(...bearer(ana));
     expect(mine.body.data).toHaveLength(1);
-    expect(mine.body.data[0]).toMatchObject({ id: ok.body.id, status: 'ISSUED', seat: 'A1' });
+    expect(mine.body.data[0]).toMatchObject({
+      id: ok.body.tickets[0].id,
+      status: 'ISSUED',
+      seat: 'A1',
+    });
 
-    // 4. repetir la compra devuelve el mismo ticket sin cobrar de nuevo
+    // 4. repetir la compra es una posible duplicación: error, sin cobrar de nuevo
     const callsBefore = gateway.calls.length;
     const again = await pay();
-    expect(again.status).toBe(200);
-    expect(again.body.id).toBe(ok.body.id);
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('DUPLICATE_PAYMENT');
     expect(gateway.calls.length).toBe(callsBefore);
 
     // 5. el seat vendido ya no está disponible

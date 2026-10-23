@@ -208,7 +208,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `POST /reservations` (USER) | 201 | 400 (`eventId` o `seats` ausentes o inválidos, de 1 a 8 seats sin repetir, o el campo antiguo `seat`), 401, 403, 404 `EVENT_NOT_FOUND` o `SEAT_NOT_FOUND`, 409 `EVENT_NOT_ACTIVE` (evento cancelado o ya iniciado), `SEAT_LIMIT_REACHED` (supera `maxSeatsPerUser` del evento), `HOLD_LIMIT_REACHED` (supera el tope global de reservas activas) o `SEAT_NOT_AVAILABLE` (algún seat ocupado: no se reserva ninguno) |
 | `GET /reservations/:id` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND` |
 | `POST /reservations/:id/cancel` (USER, solo el dueño) | 200 | 400 (id inválido), 401, 403 `FORBIDDEN` (otro rol u otro usuario), 404 `RESERVATION_NOT_FOUND`, 409 `RESERVATION_ALREADY_CANCELLED`, `RESERVATION_ALREADY_CONFIRMED`, `RESERVATION_EXPIRED` o `EVENT_CANCELLED` |
-| `POST /tickets/purchase` (USER) | 201 al emitir; 200 si la reserva ya tenía ticket (mismo ticket, sin nuevo cobro) | ver tabla siguiente |
+| `POST /tickets/purchase` (USER) | 201 al emitir (una o varias reservas, todo o nada); repetir una compra ya pagada responde `409 DUPLICATE_PAYMENT` | ver tabla siguiente |
 | `GET /tickets/me` (USER) | 200 | 400 (paginación inválida), 401, 403 |
 
 Compra (`POST /tickets/purchase`):
@@ -292,16 +292,23 @@ Errores propios del límite: `409 SEAT_LIMIT_REACHED` ("You can hold up to N sea
 
 **`POST /reservations/:id/cancel`** → 200 con el cuerpo de una reserva (un objeto, no una lista) y `status` `CANCELLED_BY_USER`; el seat vuelve a `AVAILABLE` (RN-RES-9).
 
-**`POST /tickets/purchase`** → 201 (200 con el mismo cuerpo si la reserva ya tenía ticket)
+**`POST /tickets/purchase`** → 201 (siempre; repetir una compra ya pagada responde `409 DUPLICATE_PAYMENT`)
 
-Solicitud: `{ "reservationId": "uuid", "card": { "brand": "VISA", "number": "...", "expiry": "12/28", "cvv": "123" } }`. `card.brand` es obligatoria (`VISA`, `MASTERCARD` o `AMEX`); si falta o no es válida, `ticket-api` responde `400` sin llamar a la pasarela, con un código y un mensaje específicos (ver la tabla de la compra).
+Solicitud: `{ "reservationIds": ["uuid"], "card": { "brand": "VISA", "number": "...", "expiry": "12/28", "cvv": "123" } }`. `card.brand` es obligatoria (`VISA`, `MASTERCARD` o `AMEX`); si falta o no es válida, `ticket-api` responde `400` sin llamar a la pasarela, con un código y un mensaje específicos (ver la tabla de la compra).
+`reservationIds` es una lista de 1 a 8 reservas del usuario y del mismo evento; el campo antiguo `reservationId` responde `400`. El monto es la suma de las reservas, calculada por el servidor (nunca se envía). La respuesta lista un ticket por reserva, en el orden pedido:
 ```json
 {
-  "id": "uuid", "reservationId": "uuid", "eventId": "uuid", "seat": "C7",
-  "status": "ISSUED", "amount": 150000, "transactionId": "txn_...",
-  "issuedAt": "2026-10-20T15:05:00Z"
+  "orderId": "uuid", "amount": 450000,
+  "tickets": [
+    {
+      "id": "uuid", "reservationId": "uuid", "eventId": "uuid", "seat": "C7",
+      "status": "ISSUED", "amount": 150000, "transactionId": "txn_...",
+      "issuedAt": "2026-10-20T15:05:00Z"
+    }
+  ]
 }
 ```
+Errores propios de varias reservas: `400 RESERVATIONS_MISMATCH` (eventos distintos), `400 ORDER_AMOUNT_TOO_LARGE` (total sobre 9.999.999.999,99), `409 DUPLICATE_PAYMENT` (alguna ya pagada) y `409 PAYMENT_IN_PROGRESS` (otra solicitud la está cobrando).
 
 **`GET /tickets/me`** → 200, paginado con `page` y `pageSize` (1 a 20) y `meta` (un ticket de un evento cancelado aparece con `status: "CANCELLED_BY_EVENT"`)
 ```json

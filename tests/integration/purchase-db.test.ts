@@ -4,7 +4,7 @@ import { createUserAndLogin } from '../helpers/auth.js';
 import { insertEventWithSeats, insertReservation, seatOf } from '../helpers/events.js';
 import { createTestContext, type TestContext } from '../helpers/test-app.js';
 
-describe('payments and tickets schema', () => {
+describe('orders, payments and tickets schema', () => {
   let ctx: TestContext;
   let userId: string;
   let eventId: string;
@@ -31,24 +31,34 @@ describe('payments and tickets schema', () => {
     }
   });
 
-  const payment = (reservationId: string, transactionId: string, status = 'APPROVED') =>
-    ctx.db
-      .insertInto('payments')
-      .values({
-        reservation_id: reservationId,
-        user_id: userId,
-        event_id: eventId,
-        transaction_id: transactionId,
-        amount: 100,
-        status,
-      })
+  const orders: string[] = [];
+  const order = async () => {
+    const row = await ctx.db
+      .insertInto('orders')
+      .values({ user_id: userId, event_id: eventId, amount: 100 })
       .returning('id')
       .executeTakeFirstOrThrow();
-  const ticket = (reservationId: string, paymentId: string, seatId: string, status = 'ISSUED') =>
+    orders.push(row.id);
+    return row.id;
+  };
+  const payment = (orderId: string, transactionId: string, status = 'APPROVED') =>
+    ctx.db
+      .insertInto('payments')
+      .values({ order_id: orderId, transaction_id: transactionId, amount: 100, status })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+  const ticket = (
+    reservationId: string,
+    orderId: string,
+    paymentId: string,
+    seatId: string,
+    status = 'ISSUED',
+  ) =>
     ctx.db
       .insertInto('tickets')
       .values({
         reservation_id: reservationId,
+        order_id: orderId,
         payment_id: paymentId,
         user_id: userId,
         event_id: eventId,
@@ -58,34 +68,63 @@ describe('payments and tickets schema', () => {
       })
       .execute();
 
-  it('rejects a second payment for the same reservation and a repeated transaction id', async () => {
-    await payment(reservationIds[0]!, 'txn-1');
-    await expect(payment(reservationIds[0]!, 'txn-2')).rejects.toSatisfy(isUniqueViolation);
-    await expect(payment(reservationIds[1]!, 'txn-1')).rejects.toSatisfy(isUniqueViolation);
+  it('rejects a second payment for the same order and a repeated transaction id', async () => {
+    const first = await order();
+    await payment(first, 'txn-1');
+    await expect(payment(first, 'txn-2')).rejects.toSatisfy(isUniqueViolation);
+    await expect(payment(await order(), 'txn-1')).rejects.toSatisfy(isUniqueViolation);
   });
 
-  it('rejects a second ticket for the same reservation or payment', async () => {
-    const p = await payment(reservationIds[0]!, 'txn-1');
-    await ticket(reservationIds[0]!, p.id, seatIds[0]!);
-    await expect(ticket(reservationIds[0]!, p.id, seatIds[0]!)).rejects.toSatisfy(
-      isUniqueViolation,
-    );
-    await expect(ticket(reservationIds[1]!, p.id, seatIds[1]!)).rejects.toSatisfy(
+  it('lets several tickets of one order share the same payment, one ticket per reservation', async () => {
+    const o = await order();
+    const p = await payment(o, 'txn-1');
+    await ticket(reservationIds[0]!, o, p.id, seatIds[0]!);
+    await expect(ticket(reservationIds[1]!, o, p.id, seatIds[1]!)).resolves.toBeDefined();
+    // Una reserva solo puede tener un ticket
+    await expect(ticket(reservationIds[0]!, o, p.id, seatIds[0]!)).rejects.toSatisfy(
       isUniqueViolation,
     );
   });
 
   it('rejects invalid statuses', async () => {
-    await expect(payment(reservationIds[0]!, 'txn-1', 'PAID')).rejects.toThrow();
-    const p = await payment(reservationIds[1]!, 'txn-2');
-    await expect(ticket(reservationIds[1]!, p.id, seatIds[1]!, 'USED')).rejects.toThrow();
+    const o = await order();
+    await expect(payment(o, 'txn-1', 'PAID')).rejects.toThrow();
+    const p = await payment(o, 'txn-2');
+    await expect(ticket(reservationIds[1]!, o, p.id, seatIds[1]!, 'USED')).rejects.toThrow();
   });
 
-  it('deletes payments and tickets in cascade with their event', async () => {
-    const p = await payment(reservationIds[0]!, 'txn-1');
-    await ticket(reservationIds[0]!, p.id, seatIds[0]!);
+  it('keeps order_id and payment_started_at of a reservation optional', async () => {
+    const row = await ctx.db
+      .selectFrom('reservations')
+      .select(['order_id', 'payment_started_at'])
+      .where('id', '=', reservationIds[0]!)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ order_id: null, payment_started_at: null });
+  });
+
+  it('deletes orders, payments and tickets in cascade with their event', async () => {
+    const o = await order();
+    const p = await payment(o, 'txn-1');
+    await ticket(reservationIds[0]!, o, p.id, seatIds[0]!);
     await ctx.db.deleteFrom('events').execute();
     expect(await ctx.db.selectFrom('tickets').selectAll().execute()).toHaveLength(0);
     expect(await ctx.db.selectFrom('payments').selectAll().execute()).toHaveLength(0);
+    expect(await ctx.db.selectFrom('orders').selectAll().execute()).toHaveLength(0);
+  });
+
+  it('sets reservations.order_id to null when the order disappears', async () => {
+    const o = await order();
+    await ctx.db
+      .updateTable('reservations')
+      .set({ order_id: o })
+      .where('id', '=', reservationIds[0]!)
+      .execute();
+    await ctx.db.deleteFrom('orders').where('id', '=', o).execute();
+    const row = await ctx.db
+      .selectFrom('reservations')
+      .select('order_id')
+      .where('id', '=', reservationIds[0]!)
+      .executeTakeFirstOrThrow();
+    expect(row.order_id).toBeNull();
   });
 });

@@ -237,8 +237,8 @@ else
   new_event 2
   take 2; reserve "$U" "$EVENT" "$SEATS"
   RID=$(json_get "$BODY" reservations.0.id); RID2=$(json_get "$BODY" reservations.1.id)
-  api POST /tickets/purchase "$U" "{\"reservationId\":\"$RID\",\"card\":{\"brand\":\"VISA\",\"number\":\"4111111111111111\",\"expiry\":\"12/28\",\"cvv\":\"123\"}}"
-  check "L-20a" "pagar una de las 2 reservas -> 201 ISSUED" "201 ISSUED" "$HTTP $(json_get "$BODY" status)"
+  api POST /tickets/purchase "$U" "{\"reservationIds\":[\"$RID\"],\"card\":{\"brand\":\"VISA\",\"number\":\"4111111111111111\",\"expiry\":\"12/28\",\"cvv\":\"123\"}}"
+  check "L-20a" "pagar una de las 2 reservas -> 201 ISSUED" "201 ISSUED" "$HTTP $(json_get "$BODY" tickets.0.status)"
   take 1; reserve "$U" "$EVENT" "$SEATS"
   check "L-20b" "1 ticket + 1 reserva activa = límite 2: pedir 1 más -> 409 SEAT_LIMIT_REACHED" "409 SEAT_LIMIT_REACHED" "$HTTP $CODE"
   api POST "/reservations/$RID2/cancel" "$U"

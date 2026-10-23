@@ -34,6 +34,38 @@ describe('loadEnv', () => {
     });
   });
 
+  describe('PAYMENT_CLAIM_SECONDS', () => {
+    it('defaults to 30, above the default gateway timeout of 5 seconds', () => {
+      expect(loadEnv(valid).PAYMENT_CLAIM_SECONDS).toBe(30);
+    });
+
+    it('accepts a value just above the gateway timeout', () => {
+      const env = loadEnv({
+        ...valid,
+        PAYMENT_GATEWAY_TIMEOUT_MS: '5000',
+        PAYMENT_CLAIM_SECONDS: '6',
+      });
+      expect(env.PAYMENT_CLAIM_SECONDS).toBe(6);
+    });
+
+    it.each(['5', '1'])(
+      'rejects %s seconds when it does not exceed the gateway timeout',
+      (value) => {
+        expect(() =>
+          loadEnv({ ...valid, PAYMENT_GATEWAY_TIMEOUT_MS: '5000', PAYMENT_CLAIM_SECONDS: value }),
+        ).toThrowError(/PAYMENT_CLAIM_SECONDS/);
+      },
+    );
+
+    it('rejects 0 and non-numeric values', () => {
+      for (const value of ['0', 'soon']) {
+        expect(() => loadEnv({ ...valid, PAYMENT_CLAIM_SECONDS: value })).toThrowError(
+          /PAYMENT_CLAIM_SECONDS/,
+        );
+      }
+    });
+  });
+
   it('fails naming JWT_SECRET when it is missing', () => {
     expect(() => loadEnv({ DATABASE_URL: valid.DATABASE_URL })).toThrowError(/JWT_SECRET/);
   });

@@ -35,7 +35,7 @@ describe('POST /tickets/purchase', () => {
     if (token) req.set(...bearer(token));
     return req.send(body);
   };
-  const count = async (table: 'tickets' | 'payments') =>
+  const count = async (table: 'tickets' | 'payments' | 'orders') =>
     (await ctx.db.selectFrom(table).selectAll().execute()).length;
   const reservationStatus = async (id: string) =>
     (
@@ -61,14 +61,20 @@ describe('POST /tickets/purchase', () => {
 
       expect(res.status).toBe(201);
       expect(res.body).toEqual({
-        id: expect.any(String),
-        reservationId: reservation.id,
-        eventId,
-        seat: 'B3',
-        status: 'ISSUED',
+        orderId: expect.any(String),
         amount: 150000,
-        transactionId: gatewayExamples.approved.transactionId,
-        issuedAt: expect.any(String),
+        tickets: [
+          {
+            id: expect.any(String),
+            reservationId: reservation.id,
+            eventId,
+            seat: 'B3',
+            status: 'ISSUED',
+            amount: 150000,
+            transactionId: gatewayExamples.approved.transactionId,
+            issuedAt: expect.any(String),
+          },
+        ],
       });
       expect(await seatStatus(reservation.seatId)).toBe('SOLD');
       expect(await reservationStatus(reservation.id)).toBe('CONFIRMED');
@@ -131,7 +137,7 @@ describe('POST /tickets/purchase', () => {
       'answers 400 with a specific message when the brand is %s, with no gateway call',
       async (_name, card, code, message) => {
         const { token, reservation } = await reserveSeat(ctx.app, ctx.db);
-        const res = await purchase(token, { reservationId: reservation.id, card });
+        const res = await purchase(token, { reservationIds: [reservation.id], card });
         expect(res.status).toBe(400);
         expect(res.body).toEqual({ code, message });
         expect(gateway.calls).toHaveLength(0);
@@ -299,30 +305,36 @@ describe('POST /tickets/purchase', () => {
     });
   });
 
-  describe('idempotency and concurrency', () => {
-    it('returns 200 with the same ticket and no new gateway call when repeated', async () => {
+  describe('duplicate payments and concurrency', () => {
+    it('answers 409 DUPLICATE_PAYMENT, with no new gateway call or records, when repeated', async () => {
       const { token, reservation } = await reserveSeat(ctx.app, ctx.db);
       const first = await purchase(token, purchaseBody(reservation.id));
       const again = await purchase(token, purchaseBody(reservation.id));
       expect(first.status).toBe(201);
-      expect(again.status).toBe(200);
-      expect(again.body).toEqual(first.body);
+      expect(again.status).toBe(409);
+      expect(again.body.code).toBe('DUPLICATE_PAYMENT');
       expect(gateway.calls).toHaveLength(1);
       expect(await count('tickets')).toBe(1);
       expect(await count('payments')).toBe(1);
+      expect(await count('orders')).toBe(1);
     });
 
-    it('leaves a single ticket and payment when many requests pay the same reservation at once', async () => {
+    it('charges once and leaves a single order, payment and ticket when many requests pay at once', async () => {
       const { token, reservation } = await reserveSeat(ctx.app, ctx.db);
       const results = await Promise.all(
         Array.from({ length: 6 }, () => purchase(token, purchaseBody(reservation.id))),
       );
 
-      expect(results.every((r) => r.status === 201 || r.status === 200)).toBe(true);
       expect(results.filter((r) => r.status === 201)).toHaveLength(1);
-      expect(new Set(results.map((r) => r.body.id)).size).toBe(1);
+      const others = results.filter((r) => r.status !== 201);
+      expect(others.every((r) => r.status === 409)).toBe(true);
+      expect(
+        others.every((r) => ['PAYMENT_IN_PROGRESS', 'DUPLICATE_PAYMENT'].includes(r.body.code)),
+      ).toBe(true);
+      expect(gateway.calls).toHaveLength(1);
       expect(await count('tickets')).toBe(1);
       expect(await count('payments')).toBe(1);
+      expect(await count('orders')).toBe(1);
       expect(await seatStatus(reservation.seatId)).toBe('SOLD');
     });
   });

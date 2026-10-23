@@ -75,9 +75,10 @@ new_reservation() {
 pay() {
   local out
   out=$(curl -s -w '|%{http_code}' -X POST "$1/tickets/purchase" -H "Authorization: Bearer $USR" -H "$J" \
-    -d "{\"reservationId\":\"$RID\",\"card\":$2}")
+    -d "{\"reservationIds\":[\"$RID\"],\"card\":$2}")
   HTTP="${out##*|}"; BODY="${out%|*}"
-  CODE=$(json_get "$BODY" code); [ -n "$CODE" ] || CODE=$(json_get "$BODY" status)
+  # Con éxito la respuesta es { orderId, amount, tickets: [...] }: el estado es el del primer ticket
+  CODE=$(json_get "$BODY" code); [ -n "$CODE" ] || CODE=$(json_get "$BODY" tickets.0.status)
 }
 
 card() { printf '{"brand":"%s","number":"%s","expiry":"%s","cvv":"123"}' "${2-VISA}" "$1" "${3-12/28}"; }
@@ -118,16 +119,16 @@ section "GW-01/02  Tarjeta aprobada e idempotencia"
 new_reservation "$API" "$EV" A1
 pay "$API" "$(card 4111111111111111)"
 check "GW-01a" "compra aprobada -> HTTP 201" "201" "$HTTP"
-check "GW-01b" "ticket ISSUED" "ISSUED" "$(json_get "$BODY" status)"
+check "GW-01b" "ticket ISSUED" "ISSUED" "$CODE"
 check "GW-01c" "monto = precio del evento" "75000" "$(json_get "$BODY" amount)"
-TICKET1=$(json_get "$BODY" id); TXN1=$(json_get "$BODY" transactionId)
+ORDER1=$(json_get "$BODY" orderId); TXN1=$(json_get "$BODY" tickets.0.transactionId)
 check "GW-01d" "el seat queda SOLD" "SOLD" "$(seat_status A1)"
 check "GW-01e" "GET /tickets/me muestra 1 ticket" "1" "$(my_tickets)"
 [ "$GWDB" = "1" ] && check "GW-01f" "la pasarela guardó 1 intento APPROVED" "1 APPROVED;" "$(gw_attempts "$RID")"
 pay "$API" "$(card 4111111111111111)"
-check "GW-02a" "repetir la compra -> HTTP 200" "200" "$HTTP"
-check "GW-02b" "mismo ticket" "$TICKET1" "$(json_get "$BODY" id)"
-check "GW-02c" "mismo transactionId" "$TXN1" "$(json_get "$BODY" transactionId)"
+check "GW-02a" "repetir la compra -> HTTP 409 DUPLICATE_PAYMENT" "409 DUPLICATE_PAYMENT" "$HTTP $CODE"
+check "GW-02b" "no se devuelven los tickets ya emitidos" "" "$(json_get "$BODY" orderId)"
+check "GW-02c" "el pedido original sigue siendo el único ticket del usuario" "1" "$(my_tickets)"
 [ "$GWDB" = "1" ] && check "GW-02d" "sin nuevo cobro (la pasarela sigue con 1 intento)" "1 APPROVED;" "$(gw_attempts "$RID")"
 
 # ============================== RECHAZO Y ERROR SIMULADO ==============================
@@ -147,7 +148,7 @@ pay "$API" "$(card 4111111111119999)"; check "GW-04c" "intento 3 -> 422 CARD_PRO
 check "GW-04d" "el seat sigue RESERVED" "RESERVED" "$(seat_status A3)"
 [ "$GWDB" = "1" ] && check "GW-04e" "la pasarela guardó ERROR, ERROR, CARD_FLAGGED" "1 ERROR;2 ERROR;3 CARD_FLAGGED;" "$(gw_attempts "$RID")"
 pay "$API" "$(card 4111111111111111)"
-check "GW-05a" "con otra tarjeta -> 201 ISSUED" "201 ISSUED" "$HTTP $(json_get "$BODY" status)"
+check "GW-05a" "con otra tarjeta -> 201 ISSUED" "201 ISSUED" "$HTTP $CODE"
 check "GW-05b" "el seat queda SOLD" "SOLD" "$(seat_status A3)"
 
 # ============================== FRANQUICIA ==============================
@@ -169,7 +170,7 @@ check "GW-10m" "mensaje exacto" "Card brand not allowed. Use VISA, MASTERCARD or
 check "GW-10s" "ningún error de franquicia tocó el seat (sigue RESERVED)" "RESERVED" "$(seat_status A4)"
 [ "$GWDB" = "1" ] && check "GW-10g" "la pasarela no recibió ninguna llamada" "" "$(gw_attempts "$RID")"
 pay "$API" "$(card 4111111111111111 visa)"
-check "GW-11" "brand visa (minúscula) -> 201 ISSUED" "201 ISSUED" "$HTTP $(json_get "$BODY" status)"
+check "GW-11" "brand visa (minúscula) -> 201 ISSUED" "201 ISSUED" "$HTTP $CODE"
 
 # ============================== DATOS INVÁLIDOS ==============================
 section "GW-12..15  Datos de tarjeta (los valida la pasarela)"
@@ -180,7 +181,7 @@ pay "$API" "$(card abc)";                          check "GW-14" "número 'abc' 
 check "GW-14s" "el seat sigue RESERVED" "RESERVED" "$(seat_status A5)"
 [ "$GWDB" = "1" ] && check "GW-14g" "la pasarela no guarda intentos con formato inválido" "" "$(gw_attempts "$RID")"
 pay "$API" "$(card 4111111111111234)"
-check "GW-15" "número sin Luhn válido -> 201 ISSUED (no se valida Luhn)" "201 ISSUED" "$HTTP $(json_get "$BODY" status)"
+check "GW-15" "número sin Luhn válido -> 201 ISSUED (no se valida Luhn)" "201 ISSUED" "$HTTP $CODE"
 
 # ============================== INSTANCIAS TEMPORALES ==============================
 temp_instance() { # <nombre> <puerto> <VAR=valor>
@@ -215,7 +216,10 @@ if [ "$WITH_TEMP_INSTANCES" = "1" ] && command -v docker >/dev/null 2>&1; then
     check "GW-17b" "la reserva sigue activa (seat RESERVED)" "RESERVED" "$(seat_status A7)"
     RID=$TO_RID
     pay "$API" "$(card 4111111111111111)"
-    check "GW-17c" "reintento con el timeout normal -> 201 ISSUED" "201 ISSUED" "$HTTP $(json_get "$BODY" status)"
+    check "GW-17c" "nuevo intento inmediato tras el timeout -> 409 PAYMENT_IN_PROGRESS (el reclamo se mantiene)" "409 PAYMENT_IN_PROGRESS" "$HTTP $CODE"
+    printf '        (esperando 31 s a que venza el reclamo de pago...)\n'; sleep 31
+    pay "$API" "$(card 4111111111111111)"
+    check "GW-17e" "nuevo intento pasado el reclamo, con el timeout normal -> 201 ISSUED" "201 ISSUED" "$HTTP $CODE"
     check "GW-17d" "el seat queda SOLD" "SOLD" "$(seat_status A7)"
   else
     skip "GW-17" "no se pudo levantar la instancia temporal"
@@ -225,6 +229,159 @@ else
   section "GW-16/17  Instancias temporales"
   skip "GW-16" "WITH_TEMP_INSTANCES=0 o docker no disponible"
   skip "GW-17" "WITH_TEMP_INSTANCES=0 o docker no disponible"
+fi
+
+# ============================== GW-22..28: compras de varias reservas contra ticket-api y la pasarela REAL ==============================
+section "GW-22..28  Compra de un grupo de reservas (group-purchase)"
+ADM_TOKEN=$(admin_login)
+# new_group <n> -> usuario nuevo con n reservas ACTIVE reservadas en un lote (límite 8). Define USR, GEV, GIDS (JSON) y GSEATS
+new_group() {
+  local email="suite-group-$(date +%s)-$RANDOM@example.com" n=$1 seats="" i
+  curl -s -o /dev/null -X POST "$API/auth/register" -H "$J" -d "{\"email\":\"$email\",\"password\":\"password-123\"}"
+  USR=$(curl -s -X POST "$API/auth/login" -H "$J" -d "{\"email\":\"$email\",\"password\":\"password-123\"}" | field accessToken)
+  GEV=$(curl -s -X POST "$API/events" -H "Authorization: Bearer $ADM_TOKEN" -H "$J" \
+    -d "{\"name\":\"Suite grupo $(date +%F-%H%M%S)-$RANDOM\",\"description\":\"Datos de prueba\",\"type\":\"CONCERT\",\"venue\":\"Hall\",\"price\":75000,\"capacity\":30,\"maxSeatsPerUser\":8,\"startDate\":\"$START_DATE\",\"endDate\":\"$END_DATE\"}" | field id)
+  for i in $(seq 1 "$n"); do seats="$seats\"A$i\","; done
+  GSEATS="[${seats%,}]"
+  local res; res=$(curl -s -X POST "$API/reservations" -H "Authorization: Bearer $USR" -H "$J" -d "{\"eventId\":\"$GEV\",\"seats\":$GSEATS}")
+  GIDS=$(node -pe "JSON.stringify(JSON.parse(process.argv[1]).reservations.map(r=>r.id))" "$res")
+}
+# pay_group <idsJson> <cardJson> -> define HTTP, BODY y CODE
+pay_group() {
+  local out
+  out=$(curl -s -m 20 -w '|%{http_code}' -X POST "$API/tickets/purchase" -H "Authorization: Bearer $USR" -H "$J" -d "{\"reservationIds\":$1,\"card\":$2}")
+  HTTP="${out##*|}"; BODY="${out%|*}"
+  CODE=$(json_get "$BODY" code); [ -n "$CODE" ] || CODE=$(json_get "$BODY" tickets.0.status)
+}
+reverse_ids() { node -pe "JSON.stringify(JSON.parse(process.argv[1]).reverse())" "$1"; }
+group_statuses() { # estados de las reservas del grupo, separados por coma
+  node -e "
+    const ids = JSON.parse(process.argv[1]);
+    const jwt = process.argv[2];
+    (async () => {
+      const out = [];
+      for (const id of ids) {
+        const r = await fetch(process.argv[3] + '/reservations/' + id, { headers: { Authorization: 'Bearer ' + jwt } });
+        out.push((await r.json()).status);
+      }
+      console.log(out.join(','));
+    })();" "$1" "$USR" "$API"
+}
+
+if [ -z "$ADM_TOKEN" ] || [ "$ADM_TOKEN" = "undefined" ]; then
+  skip "GW-22..28" "no se pudo iniciar sesión como ADMIN"
+else
+  new_group 3
+  pay_group "$GIDS" "$(card 4111111111111111)"
+  check "GW-22a" "grupo de 3 reservas aprobado -> 201 con 3 tickets" "201 3" "$HTTP $(json_get "$BODY" tickets.length)"
+  check "GW-22b" "monto total = 3 x 75000" "225000" "$(json_get "$BODY" amount)"
+  check "GW-22c" "los 3 tickets comparten el mismo transactionId (un solo cobro)" "1" "$(node -pe "new Set(JSON.parse(process.argv[1]).tickets.map(t=>t.transactionId)).size" "$BODY")"
+  check "GW-22d" "las 3 reservas quedan CONFIRMED" "CONFIRMED,CONFIRMED,CONFIRMED" "$(group_statuses "$GIDS")"
+  check "GW-22e" "GET /tickets/me muestra 3 tickets" "3" "$(my_tickets)"
+  pay_group "$GIDS" "$(card 4111111111111111)"
+  check "GW-23a" "repetir la compra del grupo -> 409 DUPLICATE_PAYMENT" "409 DUPLICATE_PAYMENT" "$HTTP $CODE"
+  check "GW-23b" "no se crearon más tickets" "3" "$(my_tickets)"
+
+  new_group 8
+  pay_group "$GIDS" "$(card 4111111111111111)"
+  check "GW-24" "grupo de 8 reservas (el máximo del evento) -> 201 con 8 tickets y monto 600000" "201 8 600000" "$HTTP $(json_get "$BODY" tickets.length) $(json_get "$BODY" amount)"
+
+  new_group 3
+  pay_group "$GIDS" "$(card 4111111111110000)"
+  check "GW-25a" "grupo con tarjeta rechazada (...0000) -> 402 PAYMENT_REJECTED" "402 PAYMENT_REJECTED" "$HTTP $CODE"
+  check "GW-25b" "las 3 reservas siguen ACTIVE" "ACTIVE,ACTIVE,ACTIVE" "$(group_statuses "$GIDS")"
+  pay_group "$GIDS" "$(card 4111111111111111)"
+  check "GW-25c" "nuevo intento inmediato con otra tarjeta -> 201 (el reclamo se liberó)" "201" "$HTTP"
+
+  new_group 3
+  pay_group "$GIDS" "$(card 4111111111119999)"; check "GW-26a" "grupo con error simulado (...9999), intento 1 -> 502" "502 PAYMENT_GATEWAY_ERROR" "$HTTP $CODE"
+  pay_group "$(reverse_ids "$GIDS")" "$(card 4111111111119999)"; check "GW-26b" "intento 2 con los ids en otro orden (mismo conjunto) -> 502" "502 PAYMENT_GATEWAY_ERROR" "$HTTP $CODE"
+  pay_group "$GIDS" "$(card 4111111111119999)"; check "GW-26c" "intento 3 -> 422 CARD_PROBLEM (el conteo es por conjunto)" "422 CARD_PROBLEM" "$HTTP $CODE"
+  check "GW-26d" "las 3 reservas siguen ACTIVE" "ACTIVE,ACTIVE,ACTIVE" "$(group_statuses "$GIDS")"
+  FIRST_TWO=$(node -pe "JSON.stringify(JSON.parse(process.argv[1]).slice(0,2))" "$GIDS")
+  pay_group "$FIRST_TWO" "$(card 4111111111119999)"
+  check "GW-26e" "otro conjunto (2 de las 3) con la misma tarjeta empieza su propio conteo -> 502" "502 PAYMENT_GATEWAY_ERROR" "$HTTP $CODE"
+
+  TICKET_DB_DIR="$TICKET_API_DIR"
+  if command -v docker >/dev/null 2>&1 && docker compose -f "$TICKET_DB_DIR/docker-compose.yml" --project-directory "$TICKET_DB_DIR" ps -q postgres 2>/dev/null | grep -q .; then
+    new_group 3
+    SECOND=$(node -pe "JSON.parse(process.argv[1])[1]" "$GIDS")
+    docker compose -f "$TICKET_DB_DIR/docker-compose.yml" --project-directory "$TICKET_DB_DIR" exec -T postgres sh -c \
+      "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"update reservations set expires_at = now() - interval '1 minute' where id='$SECOND'\"" >/dev/null 2>&1
+    pay_group "$GIDS" "$(card 4111111111111111)"
+    check "GW-27a" "grupo con una reserva vencida -> 409 RESERVATION_EXPIRED, sin cobrar" "409 RESERVATION_EXPIRED" "$HTTP $CODE"
+    OTHERS=$(node -pe "JSON.stringify(JSON.parse(process.argv[1]).filter(i=>i!==process.argv[2]))" "$GIDS" "$SECOND")
+    pay_group "$OTHERS" "$(card 4111111111111111)"
+    check "GW-27b" "las 2 vigentes se pueden pagar solas -> 201" "201" "$HTTP"
+  else
+    skip "GW-27" "no se pudo acceder a la base de ticket-api con docker"
+  fi
+
+  new_group 3
+  pay_group "$GIDS" "$(card 4111111111111111)"
+  CANCEL=$(curl -s -X POST "$API/events/$GEV/cancel" -H "Authorization: Bearer $ADM_TOKEN")
+  check "GW-28a" "cancelar un evento con un pedido de 3 tickets -> cancelledTickets 3" "3" "$(json_get "$CANCEL" cancelledTickets)"
+fi
+
+# ============================== GW-18..21: compras de varias reservas (group-purchase) ==============================
+# Llaman a la pasarela DIRECTAMENTE (sin ticket-api) para comprobar lo que el diseño de
+# `group-purchase` supone de ella: el `reservationId` es un texto libre, el conteo de errores es por
+# id y tarjeta, hay un tope de monto y la idempotencia es por id (ignora el monto y la tarjeta).
+new_uuid() { node -pe "require('crypto').randomUUID()"; }
+# gw_pay <id> <monto> <número> -> define GHTTP y GBODY
+gw_pay() {
+  local out
+  out=$(curl -s -m 15 -w '\n%{http_code}' -X POST "$GATEWAY_URL/payments" \
+    -H "Authorization: Bearer ${PAYMENT_GATEWAY_API_KEY:-}" -H "$J" \
+    -d "{\"reservationId\":\"$1\",\"amount\":$2,\"card\":{\"brand\":\"VISA\",\"number\":\"$3\",\"expiry\":\"12/30\",\"cvv\":\"123\"}}")
+  GHTTP=${out##*$'\n'}; GBODY=${out%$'\n'*}
+}
+
+section "GW-18  Un solo cobro por varias reservas"
+if [ -z "${PAYMENT_GATEWAY_API_KEY:-}" ]; then
+  skip "GW-18..21" "falta PAYMENT_GATEWAY_API_KEY (se lee del .env de ticket-api)"
+else
+  MIN_ID=$(new_uuid)
+  gw_pay "$MIN_ID" 450000.00 4111111111111111
+  check "GW-18a" "id arbitrario (identificador de un conjunto de 3 reservas) y monto sumado -> 200 APPROVED" "200 APPROVED" "$GHTTP $(json_get "$GBODY" status)"
+
+  section "GW-19  Conteo de errores por id y tarjeta"
+  EID=$(new_uuid)
+  gw_pay "$EID" 100.00 4111111111119999; R1="$GHTTP"
+  gw_pay "$EID" 100.00 4111111111119999; R2="$GHTTP"
+  gw_pay "$EID" 100.00 4111111111119999; R3="$GHTTP $(json_get "$GBODY" code)"
+  check "GW-19a" "mismo id y tarjeta: 502, 502 y al tercero 422 CARD_PROBLEM" "502 502 422 CARD_PROBLEM" "$R1 $R2 $R3"
+  gw_pay "$(new_uuid)" 100.00 4111111111119999
+  check "GW-19b" "otro id (otro conjunto de reservas) con la misma tarjeta: el conteo empieza de nuevo -> 502" "502" "$GHTTP"
+  gw_pay "$EID" 100.00 4111111111111111
+  check "GW-19c" "el mismo id con otra tarjeta -> 200" "200" "$GHTTP"
+
+  section "GW-20  Tope de monto"
+  gw_pay "$(new_uuid)" 9999999999.99 4111111111111111
+  check "GW-20a" "monto de 9.999.999.999,99 (el máximo del precio de un evento) -> 200" "200" "$GHTTP"
+  gw_pay "$(new_uuid)" 79999999999.92 4111111111111111
+  check "GW-20b" "LÍMITE CONOCIDO: 8 x el precio máximo (79.999.999.999,92) -> la pasarela responde 500" "500" "$GHTTP"
+
+  section "GW-21  Idempotencia por id (ignora monto y tarjeta)"
+  IID=$(new_uuid)
+  gw_pay "$IID" 100.00 4111111111111111; T1=$(json_get "$GBODY" transactionId)
+  gw_pay "$IID" 100.00 4111111111111111; T2=$(json_get "$GBODY" transactionId)
+  gw_pay "$IID" 999.00 4111111111111111; T3=$(json_get "$GBODY" transactionId)
+  gw_pay "$IID" 100.00 5500000000000004; T4=$(json_get "$GBODY" transactionId)
+  check "GW-21a" "repetir el mismo cobro devuelve el mismo transactionId" "$T1" "$T2"
+  check "GW-21b" "con otro MONTO el mismo id devuelve el mismo transactionId (la pasarela no compara montos)" "$T1" "$T3"
+  check "GW-21c" "con otra TARJETA el mismo id devuelve el mismo transactionId" "$T1" "$T4"
+  SAME=0
+  for round in 1 2 3 4 5 6; do
+    CID=$(new_uuid)
+    tmp1=$(mktemp); tmp2=$(mktemp)
+    ( gw_pay "$CID" 100.00 4111111111111111; json_get "$GBODY" transactionId > "$tmp1" ) &
+    ( gw_pay "$CID" 100.00 4111111111111111; json_get "$GBODY" transactionId > "$tmp2" ) &
+    wait
+    [ -s "$tmp1" ] && [ "$(cat "$tmp1")" = "$(cat "$tmp2")" ] && SAME=$((SAME+1))
+    rm -f "$tmp1" "$tmp2"
+  done
+  check "GW-21d" "dos cobros simultáneos con el mismo id devuelven el mismo transactionId (6 rondas)" "6" "$SAME"
 fi
 
 # ============================== RESUMEN ==============================

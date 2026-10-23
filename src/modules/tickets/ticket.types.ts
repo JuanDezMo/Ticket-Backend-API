@@ -7,6 +7,7 @@ export type TicketStatus = (typeof TICKET_STATUSES)[keyof typeof TICKET_STATUSES
 
 export interface NewTicket {
   reservationId: string;
+  orderId: string;
   paymentId: string;
   userId: string;
   eventId: string;
@@ -42,3 +43,13 @@ export interface TicketListItem {
   issuedAt: string;
   event: { id: string; name: string; venue: string; startDate: string };
 }
+
+/** Respuesta de la compra: el pedido y un ticket por reserva, en el orden de la solicitud. */
+export interface PurchaseResult {
+  orderId: string;
+  amount: number;
+  tickets: PublicTicket[];
+}
+
+/** Tope del total de un pedido: lo que aceptan la pasarela y numeric(12,2), en centavos. */
+export const MAX_ORDER_AMOUNT_CENTS = 999_999_999_999;

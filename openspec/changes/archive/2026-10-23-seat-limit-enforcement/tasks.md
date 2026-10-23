@@ -29,6 +29,7 @@
 ## 7. Concurrencia
 
 - [ ] 7.1 Pruebas de concurrencia, repetidas varias veces para detectar condiciones de carrera: dos solicitudes simultáneas del mismo usuario con límite 2 y una ya reservada (una `201` y una `409`); N solicitudes en paralelo en el límite exacto (nunca se supera); dos lotes que se cruzan (`C5,C6` y `C6,C5`) sin interbloqueo; el mismo seat pedido por varios usuarios (una sola `201`); y todo lo anterior con reservas vencidas presentes. Verificar con `pnpm test`, ejecutándolas al menos 20 veces seguidas sin fallos
+  - **Pendiente al archivar:** las pruebas existen (`tests/integration/reservation-concurrency.test.ts`) y pasan en una corrida, pero en 2 de 20 corridas repetidas falló la prueba de seats vencidos con una respuesta distinta de `201` y `409`. La causa no se investigó por decisión del usuario; si resulta un defecto real, abrir un change aparte.
 
 ## 8. Consumidores internos
 

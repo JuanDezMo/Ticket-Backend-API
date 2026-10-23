@@ -42,6 +42,25 @@ Antes de llamar a la pasarela, el sistema SHALL reclamar todas las reservas de l
 - **WHEN** `PAYMENT_CLAIM_SECONDS` es menor o igual que el tiempo límite de la pasarela
 - **THEN** el sistema no arranca y reporta la variable inválida
 
+### Requirement: Monto máximo del pedido
+El total del pedido (la suma de los montos de sus reservas) MUST NOT superar 9.999.999.999,99, el máximo que aceptan la pasarela y el campo de monto del pedido. Si lo supera, el sistema MUST responder `400` con `code` `ORDER_AMOUNT_TOO_LARGE` y el mensaje "The order total exceeds the maximum allowed. Pay fewer seats at once", antes de reclamar las reservas y sin llamar a la pasarela. La comprobación se hace tras validar que las reservas se pueden pagar.
+
+#### Scenario: Total en el máximo
+- **WHEN** un USER paga tres reservas de 3.333.333.333,33 cada una (total 9.999.999.999,99)
+- **THEN** la compra se procesa con normalidad
+
+#### Scenario: Una reserva en el precio máximo
+- **WHEN** un USER paga una reserva de 9.999.999.999,99
+- **THEN** la compra se procesa con normalidad
+
+#### Scenario: Total por encima del máximo
+- **WHEN** un USER paga dos reservas de 5.000.000.000,00 (total 10.000.000.000,00)
+- **THEN** el sistema responde `400` con `code` `ORDER_AMOUNT_TOO_LARGE`, no llama a la pasarela y las reservas siguen `ACTIVE` sin reclamo
+
+#### Scenario: Cuenta exacta
+- **WHEN** las reservas suman 0,01 por cada una de 8 seats
+- **THEN** el total es 0,08, sin errores de redondeo
+
 ### Requirement: Todo o nada en la compra
 Si alguna de las reservas no se puede pagar, el sistema MUST rechazar la compra completa sin llamar a la pasarela, sin cobrar y sin modificar ninguna reserva ni seat. El sistema MUST NOT emitir tickets parciales.
 

@@ -17,6 +17,7 @@ function build(result: GatewayResult) {
   const repo = {
     create: vi.fn().mockImplementation(async (p) => ({ id: 'pay-1', createdAt: new Date(), ...p })),
     markRefundPending: vi.fn().mockResolvedValue(2),
+    existsByTransactionId: vi.fn().mockResolvedValue(false),
   } satisfies PaymentRepository;
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() } as unknown as Logger & {
     error: ReturnType<typeof vi.fn>;
@@ -73,7 +74,7 @@ describe('PaymentService.charge', () => {
 });
 
 describe('PaymentService records', () => {
-  const payment = { reservationId: 'r', userId: 'u', eventId: 'e', transactionId: 't', amount: 10 };
+  const payment = { orderId: 'o', transactionId: 't', amount: 10 };
 
   it('records APPROVED and REFUND_PENDING payments', async () => {
     const { service, repo } = build({ kind: 'rejected' });

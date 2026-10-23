@@ -9,44 +9,52 @@ import {
 } from './ticket.types.js';
 
 export interface TicketRepository {
-  create(ticket: NewTicket, executor: Db): Promise<{ id: string }>;
-  /** Ticket de la reserva con la etiqueta del seat y el transactionId del pago. */
-  findByReservation(reservationId: string, executor?: Db): Promise<Ticket | null>;
+  /** Crea los tickets del pedido en una sola sentencia. */
+  createMany(tickets: NewTicket[], executor: Db): Promise<void>;
+  /** Tickets del pedido con la etiqueta del seat y el transactionId del pago. */
+  findByOrder(orderId: string, executor?: Db): Promise<Ticket[]>;
   listByUser(
     userId: string,
     page: PaginationParams,
   ): Promise<{ items: TicketListItem[]; total: number }>;
-  /** ISSUED -> CANCELLED_BY_EVENT. Devuelve los ids de los pagos asociados. */
-  cancelByEvent(eventId: string, executor: Db): Promise<string[]>;
+  /** ISSUED -> CANCELLED_BY_EVENT. Devuelve cuántos tickets canceló y los pagos asociados, sin repetir. */
+  cancelByEvent(
+    eventId: string,
+    executor: Db,
+  ): Promise<{ ticketCount: number; paymentIds: string[] }>;
 }
 
 export class KyselyTicketRepository implements TicketRepository {
   constructor(private readonly db: Db) {}
 
-  async create(ticket: NewTicket, executor: Db): Promise<{ id: string }> {
-    return executor
+  async createMany(tickets: NewTicket[], executor: Db): Promise<void> {
+    if (tickets.length === 0) return;
+    await executor
       .insertInto('tickets')
-      .values({
-        reservation_id: ticket.reservationId,
-        payment_id: ticket.paymentId,
-        user_id: ticket.userId,
-        event_id: ticket.eventId,
-        seat_id: ticket.seatId,
-        amount: ticket.amount,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+      .values(
+        tickets.map((ticket) => ({
+          reservation_id: ticket.reservationId,
+          order_id: ticket.orderId,
+          payment_id: ticket.paymentId,
+          user_id: ticket.userId,
+          event_id: ticket.eventId,
+          seat_id: ticket.seatId,
+          amount: ticket.amount,
+        })),
+      )
+      .execute();
   }
 
-  async findByReservation(reservationId: string, executor: Db = this.db): Promise<Ticket | null> {
+  async findByOrder(orderId: string, executor: Db = this.db): Promise<Ticket[]> {
     // Lectura con joins a seats y payments para armar la respuesta; no modifica esas tablas
-    const row = await executor
+    const rows = await executor
       .selectFrom('tickets')
       .innerJoin('seats', 'seats.id', 'tickets.seat_id')
       .innerJoin('payments', 'payments.id', 'tickets.payment_id')
       .select([
         'tickets.id',
         'tickets.reservation_id',
+        'tickets.order_id',
         'tickets.payment_id',
         'tickets.user_id',
         'tickets.event_id',
@@ -58,12 +66,12 @@ export class KyselyTicketRepository implements TicketRepository {
         'seats.number',
         'payments.transaction_id',
       ])
-      .where('tickets.reservation_id', '=', reservationId)
-      .executeTakeFirst();
-    if (!row) return null;
-    return {
+      .where('tickets.order_id', '=', orderId)
+      .execute();
+    return rows.map((row) => ({
       id: row.id,
       reservationId: row.reservation_id,
+      orderId: row.order_id,
       paymentId: row.payment_id,
       userId: row.user_id,
       eventId: row.event_id,
@@ -73,7 +81,7 @@ export class KyselyTicketRepository implements TicketRepository {
       issuedAt: row.issued_at,
       seat: `${row.row}${row.number}`,
       transactionId: row.transaction_id,
-    };
+    }));
   }
 
   async listByUser(userId: string, page: PaginationParams) {
@@ -117,7 +125,7 @@ export class KyselyTicketRepository implements TicketRepository {
     return { items, total: Number(count) };
   }
 
-  async cancelByEvent(eventId: string, executor: Db): Promise<string[]> {
+  async cancelByEvent(eventId: string, executor: Db) {
     const rows = await executor
       .updateTable('tickets')
       .set({ status: TICKET_STATUSES.CANCELLED_BY_EVENT })
@@ -125,6 +133,10 @@ export class KyselyTicketRepository implements TicketRepository {
       .where('status', '=', TICKET_STATUSES.ISSUED)
       .returning('payment_id')
       .execute();
-    return rows.map((row) => row.payment_id);
+    // Varios tickets de un pedido comparten pago: se devuelve cada pago una sola vez
+    return {
+      ticketCount: rows.length,
+      paymentIds: [...new Set(rows.map((row) => row.payment_id))],
+    };
   }
 }

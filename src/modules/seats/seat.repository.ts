@@ -22,6 +22,8 @@ export interface SeatRepository {
   markReserved(seatId: string, executor?: Db): Promise<boolean>;
   /** Pasa a BLOCKED todos los seats del evento que no lo estén. Devuelve cuántos cambió. */
   blockAllByEvent(eventId: string, executor?: Db): Promise<number>;
+  /** Pasa a SOLD, en una sola sentencia, los seats indicados que estén RESERVED. Devuelve cuántos cambió. */
+  markSoldMany(ids: string[], executor: Db): Promise<number>;
   /** Pasa el seat a SOLD solo si está RESERVED. Devuelve false si no cambió nada. */
   markSold(seatId: string, executor?: Db): Promise<boolean>;
   /** Devuelve el seat a AVAILABLE solo si está RESERVED (no deshace BLOCKED ni SOLD). */
@@ -113,6 +115,17 @@ export class KyselySeatRepository implements SeatRepository {
       .where('status', '=', SEAT_STATUSES.AVAILABLE)
       .executeTakeFirst();
     return result.numUpdatedRows > 0n;
+  }
+
+  async markSoldMany(ids: string[], executor: Db): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await executor
+      .updateTable('seats')
+      .set({ status: SEAT_STATUSES.SOLD })
+      .where('id', 'in', ids)
+      .where('status', '=', SEAT_STATUSES.RESERVED)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
   }
 
   async markSold(seatId: string, executor: Db = this.db): Promise<boolean> {

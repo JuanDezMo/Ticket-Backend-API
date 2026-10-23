@@ -186,6 +186,31 @@ export class ReservationService {
     return toPublicReservation(cancelled, `${seat.row}${seat.number}`);
   }
 
+  findManyForPurchase(ids: string[]) {
+    return this.reservations.findManyForPurchase(ids);
+  }
+
+  lockManyByIds(ids: string[], executor: Db): Promise<Reservation[]> {
+    return this.reservations.lockManyByIds(ids, executor);
+  }
+
+  markConfirmedMany(ids: string[], executor: Db): Promise<number> {
+    return this.reservations.markConfirmedMany(ids, executor);
+  }
+
+  attachToOrder(ids: string[], orderId: string, executor: Db): Promise<void> {
+    return this.reservations.attachToOrder(ids, orderId, executor);
+  }
+
+  /** Todo o nada: false si alguna reserva ya tiene un pago en curso (no se reclama ninguna). */
+  claimForPayment(ids: string[], claimSeconds: number): Promise<boolean> {
+    return this.reservations.claimForPayment(ids, claimSeconds);
+  }
+
+  releaseClaim(ids: string[]): Promise<void> {
+    return this.reservations.releaseClaim(ids);
+  }
+
   findForPurchase(id: string) {
     return this.reservations.findForPurchase(id);
   }

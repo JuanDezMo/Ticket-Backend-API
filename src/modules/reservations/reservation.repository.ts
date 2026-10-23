@@ -36,6 +36,22 @@ export interface ReservationRepository {
   cancelActiveByEvent(eventId: string, executor?: Db): Promise<number>;
   /** Busca la reserva e indica si venció según la hora de la BD (expires_at <= now()). */
   findForPurchase(id: string): Promise<{ reservation: Reservation; expired: boolean } | null>;
+  /** Las reservas pedidas con el indicador de vencida según la hora de la BD (las inexistentes no aparecen). */
+  findManyForPurchase(ids: string[]): Promise<{ reservation: Reservation; expired: boolean }[]>;
+  /** SELECT ... ORDER BY id FOR UPDATE: bloquea las reservas siempre por id ascendente. */
+  lockManyByIds(ids: string[], executor: Db): Promise<Reservation[]>;
+  /** ACTIVE -> CONFIRMED para varias, en una sola sentencia, y limpia el reclamo. Devuelve cuántas cambió. */
+  markConfirmedMany(ids: string[], executor: Db): Promise<number>;
+  /** Asocia las reservas al pedido. */
+  attachToOrder(ids: string[], orderId: string, executor: Db): Promise<void>;
+  /**
+   * Reclamo atómico antes de cobrar: marca `payment_started_at = now()` en todas las reservas, solo si
+   * están ACTIVE, vigentes y sin un reclamo reciente. Todo o nada: devuelve false (y no deja nada
+   * reclamado) si alguna ya está reclamada. Toma las filas con SKIP LOCKED: nunca espera a otra solicitud.
+   */
+  claimForPayment(ids: string[], claimSeconds: number): Promise<boolean>;
+  /** Limpia el reclamo de las reservas indicadas. */
+  releaseClaim(ids: string[]): Promise<void>;
   /** SELECT ... FOR UPDATE: serializa compras simultáneas de la misma reserva. */
   lockById(id: string, executor: Db): Promise<Reservation | null>;
   /** ACTIVE -> CONFIRMED. Devuelve false si la reserva ya no estaba ACTIVE. */
@@ -54,11 +70,15 @@ function toReservation(row: Selectable<Reservations>): Reservation {
     seatId: row.seat_id,
     eventId: row.event_id,
     status: row.status as ReservationStatus,
+    orderId: row.order_id,
     amount: Number(row.amount),
     expiresAt: row.expires_at,
     createdAt: row.created_at,
   };
 }
+
+/** Señal interna: no se pudieron reclamar todas las reservas; revierte la transacción del reclamo. */
+class ClaimNotAvailable extends Error {}
 
 export class KyselyReservationRepository implements ReservationRepository {
   constructor(private readonly db: Db) {}
@@ -140,6 +160,90 @@ export class KyselyReservationRepository implements ReservationRepository {
       .where('id', '=', id)
       .executeTakeFirst();
     return row ? { reservation: toReservation(row), expired: row.expired } : null;
+  }
+
+  async findManyForPurchase(ids: string[]) {
+    if (ids.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('reservations')
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as('expired'))
+      .where('id', 'in', ids)
+      .execute();
+    return rows.map((row) => ({ reservation: toReservation(row), expired: row.expired }));
+  }
+
+  async lockManyByIds(ids: string[], executor: Db): Promise<Reservation[]> {
+    if (ids.length === 0) return [];
+    const rows = await executor
+      .selectFrom('reservations')
+      .selectAll()
+      .where('id', 'in', ids)
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    return rows.map(toReservation);
+  }
+
+  async markConfirmedMany(ids: string[], executor: Db): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await executor
+      .updateTable('reservations')
+      .set({ status: RESERVATION_STATUSES.CONFIRMED, payment_started_at: null })
+      .where('id', 'in', ids)
+      .where('status', '=', RESERVATION_STATUSES.ACTIVE)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
+  }
+
+  async attachToOrder(ids: string[], orderId: string, executor: Db): Promise<void> {
+    if (ids.length === 0) return;
+    await executor
+      .updateTable('reservations')
+      .set({ order_id: orderId })
+      .where('id', 'in', ids)
+      .execute();
+  }
+
+  async claimForPayment(ids: string[], claimSeconds: number): Promise<boolean> {
+    if (ids.length === 0) return false;
+    // Una transacción corta: si no se reclaman todas, se revierte y no queda ninguna reclamada
+    return this.db
+      .transaction()
+      .execute(async (trx) => {
+        const result = await sql`
+        WITH free AS MATERIALIZED (
+          SELECT id FROM reservations
+          WHERE id IN (${sql.join(ids)})
+            AND status = ${sql.lit(RESERVATION_STATUSES.ACTIVE)}
+            AND expires_at > now()
+            AND (payment_started_at IS NULL
+                 OR payment_started_at < now() - make_interval(secs => ${claimSeconds}))
+          ORDER BY id
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE reservations SET payment_started_at = now()
+        WHERE id IN (SELECT id FROM free)
+      `.execute(trx);
+        if (Number(result.numAffectedRows ?? 0) !== ids.length) {
+          // Sin deshacer la transacción no basta con retornar: se aborta para que no quede nada reclamado
+          throw new ClaimNotAvailable();
+        }
+        return true;
+      })
+      .catch((error) => {
+        if (error instanceof ClaimNotAvailable) return false;
+        throw error;
+      });
+  }
+
+  async releaseClaim(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.db
+      .updateTable('reservations')
+      .set({ payment_started_at: null })
+      .where('id', 'in', ids)
+      .execute();
   }
 
   async lockById(id: string, executor: Db): Promise<Reservation | null> {

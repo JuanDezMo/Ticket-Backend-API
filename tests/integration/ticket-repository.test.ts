@@ -25,22 +25,22 @@ describe('KyselyTicketRepository', () => {
 
   const seat = async (eventId: string, n: number) => (await seatOf(ctx.db, eventId, 'A', n)).id;
 
-  it('finds a ticket by reservation with its seat label and transaction id', async () => {
+  it('finds the tickets of an order with their seat label and transaction id', async () => {
     const event = await insertEventWithSeats(ctx.db, { capacity: 10 });
     const t = await insertTicket(ctx.db, {
       userId,
       eventId: event.id,
       seatId: await seat(event.id, 3),
     });
-    const reservationId = (
+    const orderId = (
       await ctx.db
         .selectFrom('tickets')
-        .select('reservation_id')
+        .select('order_id')
         .where('id', '=', t.id)
         .executeTakeFirstOrThrow()
-    ).reservation_id;
+    ).order_id;
 
-    const found = await repo.findByReservation(reservationId);
+    const [found] = await repo.findByOrder(orderId);
     expect(found).toMatchObject({
       id: t.id,
       seat: 'A3',
@@ -50,7 +50,7 @@ describe('KyselyTicketRepository', () => {
       eventId: event.id,
     });
     expect(found?.transactionId).toMatch(/^txn-/);
-    expect(await repo.findByReservation(crypto.randomUUID())).toBeNull();
+    expect(await repo.findByOrder(crypto.randomUUID())).toEqual([]);
   });
 
   it('lists only the tickets of the user, newest first, with the event data and a total', async () => {
@@ -120,11 +120,62 @@ describe('KyselyTicketRepository', () => {
     });
     const tb = await insertTicket(ctx.db, { userId, eventId: b.id, seatId: await seat(b.id, 1) });
 
-    const paymentIds = await repo.cancelByEvent(a.id, ctx.db);
+    const { ticketCount, paymentIds } = await repo.cancelByEvent(a.id, ctx.db);
+    expect(ticketCount).toBe(2);
     expect(paymentIds).toHaveLength(2);
     const statuses = await ctx.db.selectFrom('tickets').select(['id', 'status']).execute();
     expect(statuses.find((s) => s.id === t1.id)?.status).toBe('CANCELLED_BY_EVENT');
     expect(statuses.find((s) => s.id === tb.id)?.status).toBe('ISSUED');
-    expect(await repo.cancelByEvent(a.id, ctx.db)).toEqual([]);
+    expect(await repo.cancelByEvent(a.id, ctx.db)).toEqual({ ticketCount: 0, paymentIds: [] });
+  });
+
+  it('cancelByEvent counts the tickets and returns each shared payment once', async () => {
+    const event = await insertEventWithSeats(ctx.db, { capacity: 10 });
+    const order = await ctx.db
+      .insertInto('orders')
+      .values({ user_id: userId, event_id: event.id, amount: 300 })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const payment = await ctx.db
+      .insertInto('payments')
+      .values({ order_id: order.id, transaction_id: 'txn-shared', amount: 300, status: 'APPROVED' })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    for (const n of [1, 2, 3]) {
+      const seatId = await seat(event.id, n);
+      const reservation = await ctx.db
+        .insertInto('reservations')
+        .values({
+          user_id: userId,
+          seat_id: seatId,
+          event_id: event.id,
+          order_id: order.id,
+          amount: 100,
+          status: 'CONFIRMED',
+          expires_at: new Date(Date.now() + 600_000),
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      await ctx.db
+        .insertInto('tickets')
+        .values({
+          reservation_id: reservation.id,
+          order_id: order.id,
+          payment_id: payment.id,
+          user_id: userId,
+          event_id: event.id,
+          seat_id: seatId,
+          amount: 100,
+        })
+        .execute();
+    }
+
+    const result = await repo.cancelByEvent(event.id, ctx.db);
+
+    expect(result.ticketCount).toBe(3);
+    expect(result.paymentIds).toEqual([payment.id]);
+    const found = await repo.findByOrder(order.id);
+    expect(found).toHaveLength(3);
+    expect(found.every((t) => t.transactionId === 'txn-shared')).toBe(true);
   });
 });

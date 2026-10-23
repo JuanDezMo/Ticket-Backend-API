@@ -52,6 +52,10 @@ export class PaymentService {
     return this.payments.create({ ...payment, status: PAYMENT_STATUSES.REFUND_PENDING }, executor);
   }
 
+  existsByTransactionId(transactionId: string, executor?: Db): Promise<boolean> {
+    return this.payments.existsByTransactionId(transactionId, executor);
+  }
+
   markRefundPending(paymentIds: string[], executor: Db): Promise<number> {
     return this.payments.markRefundPending(paymentIds, executor);
   }

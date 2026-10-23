@@ -23,6 +23,8 @@ import { CancellationService } from './modules/cancellations/cancellation.servic
 import { BlockSeatsStep } from './modules/cancellations/steps/block-seats.step.js';
 import { CancelReservationsStep } from './modules/cancellations/steps/cancel-reservations.step.js';
 import { CancelTicketsStep } from './modules/cancellations/steps/cancel-tickets.step.js';
+import { KyselyOrderRepository } from './modules/orders/order.repository.js';
+import { OrderService } from './modules/orders/order.service.js';
 import { HttpPaymentGateway } from './modules/payments/http-payment-gateway.js';
 import type { PaymentGateway } from './modules/payments/payment-gateway.js';
 import { KyselyPaymentRepository } from './modules/payments/payment.repository.js';
@@ -80,8 +82,10 @@ export function buildContainer(
     eventService,
     seatService,
     paymentService,
+    new OrderService(new KyselyOrderRepository(db)),
     db,
     logger,
+    env.PAYMENT_CLAIM_SECONDS,
   );
 
   // IMPORTANTE: el orden de los pasos evita que una reserva simultánea quede ACTIVE sobre un

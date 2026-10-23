@@ -103,7 +103,7 @@ Tarjetas de la pasarela: termina en `0000` → rechazada; termina en `9999` → 
 |---|---|---|---|
 | GW-00 | Prerrequisitos | `GET /health`, `GET /actuator/health`, `POST /payments` sin header | Ambos `UP`; la pasarela responde `401` sin key |
 | GW-01 | Tarjeta aprobada | VISA `4111111111111111` | `201`, ticket `ISSUED`, monto = precio del evento (75000), seat `SOLD`, 1 ticket en `/tickets/me`, la pasarela guarda 1 intento `APPROVED` |
-| GW-02 | Idempotencia | Repetir la misma compra | `200`, mismo ticket y mismo `transactionId`; la pasarela no registra un segundo cobro |
+| GW-02 | Compra duplicada | Repetir la misma compra | `409` `DUPLICATE_PAYMENT`, sin devolver tickets; la pasarela no registra un segundo cobro |
 | GW-03 | Tarjeta rechazada | `...0000` | `402` `PAYMENT_REJECTED`; seat sigue `RESERVED`; la pasarela guarda `REJECTED` |
 | GW-04 | Error simulado, 3 intentos | `...9999` ×3, misma reserva | `502` `PAYMENT_GATEWAY_ERROR`, `502`, `422` `CARD_PROBLEM`; seat sigue `RESERVED`; la pasarela guarda `ERROR`, `ERROR`, `CARD_FLAGGED` |
 | GW-05 | Cambio de tarjeta tras `CARD_FLAGGED` | `...1111` en la misma reserva | `201`, seat `SOLD` |
@@ -119,8 +119,20 @@ Tarjetas de la pasarela: termina en `0000` → rechazada; termina en `9999` → 
 | GW-15 | Número sin Luhn válido | `4111111111111234` | `201` (no se valida Luhn) |
 | GW-16 | API key incorrecta en `ticket-api` | Instancia temporal en `:3101` con una key errónea | `500` `INTERNAL_ERROR` con mensaje genérico; el log registra el incidente **sin** la key; seat sigue `RESERVED` |
 | GW-17 | Timeout | Instancia temporal en `:3102` con `PAYMENT_GATEWAY_TIMEOUT_MS=1`, y luego reintento normal | `504` `PAYMENT_GATEWAY_TIMEOUT`, seat `RESERVED`; el reintento con el timeout normal responde `201` y seat `SOLD` |
+| GW-18 | Un solo cobro por varias reservas | `reservationId` arbitrario (el identificador de un conjunto de 3 reservas) y monto sumado `450000.00` | `200` `APPROVED`: la pasarela acepta un id que no es de una reserva concreta |
+| GW-19 | Conteo de errores por id y tarjeta | `...9999` ×3 con el mismo id; luego otro id; luego otra tarjeta con el mismo id | `502`, `502`, `422` `CARD_PROBLEM`; con otro id el conteo empieza de nuevo (`502`); con otra tarjeta `200` |
+| GW-20 | Tope de monto | `9999999999.99` y `79999999999.92` (8 × el precio máximo) | `200` y **`500` de la pasarela**: límite conocido, ver "Hallazgos" |
+| GW-21 | Idempotencia por id | Mismo id repetido; con otro monto; con otra tarjeta; dos cobros simultáneos (6 rondas) | Siempre el **mismo `transactionId`**: la pasarela no compara monto ni tarjeta y es idempotente también en simultáneo |
 
 En todos los pagos no aprobados (GW-03, 04, 06 a 10, 12 a 14, 16 y 17a) se comprueba también que la reserva sigue activa (seat `RESERVED`) y que no se emitió ticket.
+
+### Hallazgos de GW-18 a GW-21 (cambio `group-purchase`)
+
+- **El `reservationId` es un texto libre** (se acepta cualquier id no vacío), así que se puede enviar un identificador de grupo.
+- **El conteo de 3 errores es por id y tarjeta:** con un id estable por conjunto de reservas, el nuevo intento del usuario con el mismo conjunto sigue sumando errores.
+- **Montos desde 10^10 fallan con `500`** (el límite es `9999999999.99`, 12 dígitos con 2 decimales). El precio máximo de un evento ya cabe, pero la suma de varios seats puede superarlo.
+- **La idempotencia es solo por id:** con el mismo id la pasarela devuelve el mismo `transactionId` aunque cambien el monto o la tarjeta. Por eso el id enviado debe identificar **el conjunto exacto** de reservas: si dos conjuntos distintos comparten id (por ejemplo, ambos con el mismo menor id), el segundo no se cobraría y reutilizaría el cobro del primero.
+- **Los cobros simultáneos con el mismo id devuelven el mismo `transactionId`** (6 de 6 rondas): el doble cobro por solicitudes simultáneas está cubierto también por la pasarela. El reclamo de `ticket-api` queda como defensa adicional.
 
 ## 5. Resultado de la última ejecución
 

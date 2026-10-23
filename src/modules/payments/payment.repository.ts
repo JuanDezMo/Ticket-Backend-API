@@ -12,14 +12,14 @@ export interface PaymentRepository {
   create(payment: NewPayment, executor?: Db): Promise<Payment>;
   /** Pasa los pagos indicados a REFUND_PENDING. Devuelve cuántos cambió. */
   markRefundPending(paymentIds: string[], executor?: Db): Promise<number>;
+  /** ¿Ya existe un pago con ese transactionId? (es único) */
+  existsByTransactionId(transactionId: string, executor?: Db): Promise<boolean>;
 }
 
 function toPayment(row: Selectable<Payments>): Payment {
   return {
     id: row.id,
-    reservationId: row.reservation_id,
-    userId: row.user_id,
-    eventId: row.event_id,
+    orderId: row.order_id,
     transactionId: row.transaction_id,
     amount: Number(row.amount),
     status: row.status as PaymentStatus,
@@ -34,9 +34,7 @@ export class KyselyPaymentRepository implements PaymentRepository {
     const row = await executor
       .insertInto('payments')
       .values({
-        reservation_id: payment.reservationId,
-        user_id: payment.userId,
-        event_id: payment.eventId,
+        order_id: payment.orderId,
         transaction_id: payment.transactionId,
         amount: payment.amount,
         status: payment.status,
@@ -44,6 +42,15 @@ export class KyselyPaymentRepository implements PaymentRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return toPayment(row);
+  }
+
+  async existsByTransactionId(transactionId: string, executor: Db = this.db): Promise<boolean> {
+    const row = await executor
+      .selectFrom('payments')
+      .select('id')
+      .where('transaction_id', '=', transactionId)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   async markRefundPending(paymentIds: string[], executor: Db = this.db): Promise<number> {

@@ -26,8 +26,8 @@
 1. Validar la franquicia (como hoy).
 2. Cargar las reservas pedidas con una consulta que también indica si cada una venció por la hora de la base de datos (`findManyForPurchase`). Falta alguna → `404 RESERVATION_NOT_FOUND`.
 3. Pertenencia: alguna ajena → `403 FORBIDDEN`. Eventos distintos → `400 RESERVATIONS_MISMATCH`.
-4. Recorrer las reservas **en el orden de la solicitud** y responder el primer problema: `CONFIRMED` → `409 DUPLICATE_PAYMENT`; evento cancelado → `EVENT_CANCELLED`; `CANCELLED_BY_USER` → `RESERVATION_ALREADY_CANCELLED`; no `ACTIVE` o vencida → `RESERVATION_EXPIRED`. Sin llamar a la pasarela.
-5. **Reclamo** de las reservas (decisión 4) y, a continuación, **un cobro** a la pasarela, **fuera de transacción** (como hoy), con la suma calculada en centavos enteros (nunca sumando decimales de punto flotante) y `reservationId` = el menor id de las reservas.
+4. Recorrer las reservas **en el orden de la solicitud** y responder el primer problema: `CONFIRMED` → `409 DUPLICATE_PAYMENT`; evento cancelado → `EVENT_CANCELLED`; `CANCELLED_BY_USER` → `RESERVATION_ALREADY_CANCELLED`; no `ACTIVE` o vencida → `RESERVATION_EXPIRED`. Sin llamar a la pasarela. Después, el total en centavos no puede superar 9.999.999.999,99 (`400 ORDER_AMOUNT_TOO_LARGE`).
+5. **Reclamo** de las reservas (decisión 4) y, a continuación, **un cobro** a la pasarela, **fuera de transacción** (como hoy), con la suma calculada en centavos enteros (nunca sumando decimales de punto flotante) y `reservationId` = el identificador del conjunto exacto de reservas (decisión 5).
 6. Transacción de emisión (decisión 3). Si la emisión no es posible tras cobrar: pago `REFUND_PENDING` y `409`.
 
 ### 3. Transacción de emisión y orden de bloqueos
@@ -43,7 +43,8 @@ Entre los pasos 4 y 5 del flujo, una transacción corta ejecuta un reclamo atóm
 - *Alternativa descartada:* mantener una transacción abierta durante el cobro. Retiene una conexión y bloquea filas hasta el tiempo límite, frenando la cancelación de reservas y la liberación de vencidas.
 
 ### 5. Identificador enviado a la pasarela
-Se envía como `reservationId` el menor id de las reservas (orden por texto del UUID). Es estable entre nuevos intentos del usuario con el mismo conjunto, así que se conserva el conteo de 3 errores por reserva y tarjeta. Un conjunto distinto (otro subconjunto) cuenta como una compra nueva para la pasarela; es una limitación asumida.
+La pasarela es idempotente **solo por `reservationId`**: con el mismo id devuelve el mismo `transactionId` aunque cambien el monto o la tarjeta (comprobado en GW-21), y cuenta los 3 errores por id y tarjeta (GW-19). Por eso el id debe identificar **el conjunto exacto** de reservas: se envía el id de la reserva si es una sola y, si son varias, un UUID v5 (espacio de nombres fijo en una constante) calculado sobre los ids ordenados y unidos. El mismo conjunto da siempre el mismo id (conserva el conteo de errores y la idempotencia en nuevos intentos del usuario) y dos conjuntos distintos nunca lo comparten. Enviar "el menor id" se descartó: dos conjuntos con el mismo menor id compartirían cobro.
+- *Caso abierto (riesgo conocido):* el mismo conjunto ya cobrado por la pasarela cuya emisión falló (pago `REFUND_PENDING`, reservas aún `ACTIVE`). Al volver a pagar, la pasarela devuelve el mismo `transactionId` sin cobrar y la base lo rechaza por ser único (`payments.transaction_id`). Se deja como `500` con un registro para conciliación; recuperar ese pago (pasarlo a `APPROVED` y emitir los tickets) queda como mejora futura.
 
 ### 6. Contrato HTTP
 `purchaseSchema`: `reservationIds` lista de 1 a `MAX_SEATS_PER_USER` UUID únicos, con el mensaje "reservationIds is required" cuando falta; `.strict()` (rechaza `reservationId` y `amount`). La respuesta es `{ orderId, amount, tickets }` y el controlador responde siempre `201`. Se elimina `PurchaseResult.created`.
@@ -52,7 +53,7 @@ Se envía como `reservationId` el menor id de las reservas (orden por texto del 
 `tickets.cancelByEvent` devuelve ahora `{ ticketCount, paymentIds }` con los `payment_id` **sin repetir**, porque varios tickets comparten pago. `TicketService.cancelByEvent` usa `ticketCount` para el resultado (`cancelledTickets`) y los `paymentIds` para pasar los pagos a `REFUND_PENDING` una sola vez cada uno. Sin este cambio el contador de tickets cancelados saldría menor al real.
 
 ### 8. Códigos de error y configuración
-Se agregan al catálogo `DUPLICATE_PAYMENT` (`409`, "These reservations were already paid. Check your tickets before paying again"), `PAYMENT_IN_PROGRESS` (`409`, "Your payment is being processed. Try again in a few seconds") y `RESERVATIONS_MISMATCH` (`400`). `PAYMENT_CLAIM_SECONDS` (entero ≥ 1, 30 por defecto) se agrega a `env.ts`, `docker-compose.yml`, `.env.example` y `docs/ci-cd.md`.
+Se agregan al catálogo `ORDER_AMOUNT_TOO_LARGE` (`400`, "The order total exceeds the maximum allowed. Pay fewer seats at once"), `DUPLICATE_PAYMENT` (`409`, "These reservations were already paid. Check your tickets before paying again"), `PAYMENT_IN_PROGRESS` (`409`, "Your payment is being processed. Try again in a few seconds") y `RESERVATIONS_MISMATCH` (`400`). `PAYMENT_CLAIM_SECONDS` (entero ≥ 1, 30 por defecto) se agrega a `env.ts`, `docker-compose.yml`, `.env.example` y `docs/ci-cd.md`.
 
 ### 9. Consumidores internos
 `tests/helpers/purchase.ts` (`purchaseBody`, `insertTicket` con pedido y pago), las pruebas de compra, cancelación y listado de tickets, `scripts/verify-gateway.sh`, `README` y documentación.
@@ -65,6 +66,7 @@ Se agregan al catálogo `DUPLICATE_PAYMENT` (`409`, "These reservations were alr
 - [Interbloqueos entre compra, cancelación del evento y liberación de vencidas] → orden único de bloqueos (decisión 3) y pruebas de concurrencia con cancelación simultánea.
 - [Una reserva vence entre validar y cobrar] → se revalida bajo bloqueo (decisión 3) y queda `REFUND_PENDING`; el cobro de la pasarela es lento (hasta 5 s), por eso es el caso más probable.
 - [Cliente que no recibió el `201` vuelve a pagar] → recibe `409 DUPLICATE_PAYMENT`; los tickets se consultan en `GET /tickets/me`. Se documenta para el frontend.
+- [Total por encima de lo que acepta la pasarela (límite de 12 dígitos con 2 decimales, comprobado en GW-20: más allá responde `500`)] → se valida el total antes de reclamar y cobrar (`ORDER_AMOUNT_TOO_LARGE`).
 - [Redondeo] → la suma se hace en centavos enteros y el monto del pedido se compara con la suma de las reservas en la prueba.
 - [BREAKING sin compatibilidad] → el único consumidor es el frontend propio (`web-group-checkout`); las pruebas, el script y la documentación se actualizan aquí.
 - [Pago `REFUND_PENDING` de un pedido sin reservas asociadas] → en la ruta de reembolso pendiente no se fija `order_id` en las reservas (algunas siguen `ACTIVE`); el pedido y el pago conservan usuario, evento, monto y `transactionId` para la conciliación.

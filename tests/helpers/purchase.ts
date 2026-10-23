@@ -6,8 +6,15 @@ import { insertEventWithSeats } from './events.js';
 
 export const CARD = { brand: 'VISA', number: '4111111111111111', expiry: '12/28', cvv: '123' };
 
-export function purchaseBody(reservationId: string, card: Record<string, unknown> = CARD) {
-  return { reservationId, card };
+/** Cuerpo de la compra: una reserva o varias (siempre se envía como lista). */
+export function purchaseBody(
+  reservationIds: string | string[],
+  card: Record<string, unknown> = CARD,
+) {
+  return {
+    reservationIds: Array.isArray(reservationIds) ? reservationIds : [reservationIds],
+    card,
+  };
 }
 
 /** Un USER con una reserva ACTIVE de un seat de un evento con seats. */
@@ -37,12 +44,18 @@ export async function insertTicket(
   db: Db,
   input: { userId: string; eventId: string; seatId: string; issuedAt?: Date; status?: string },
 ) {
+  const order = await db
+    .insertInto('orders')
+    .values({ user_id: input.userId, event_id: input.eventId, amount: 100 })
+    .returning('id')
+    .executeTakeFirstOrThrow();
   const reservation = await db
     .insertInto('reservations')
     .values({
       user_id: input.userId,
       seat_id: input.seatId,
       event_id: input.eventId,
+      order_id: order.id,
       amount: 100,
       status: 'CONFIRMED',
       expires_at: new Date(Date.now() + 600_000),
@@ -52,9 +65,7 @@ export async function insertTicket(
   const payment = await db
     .insertInto('payments')
     .values({
-      reservation_id: reservation.id,
-      user_id: input.userId,
-      event_id: input.eventId,
+      order_id: order.id,
       transaction_id: `txn-${crypto.randomUUID()}`,
       amount: 100,
       status: input.status === 'CANCELLED_BY_EVENT' ? 'REFUND_PENDING' : 'APPROVED',
@@ -66,6 +77,7 @@ export async function insertTicket(
     .insertInto('tickets')
     .values({
       reservation_id: reservation.id,
+      order_id: order.id,
       payment_id: payment.id,
       user_id: input.userId,
       event_id: input.eventId,

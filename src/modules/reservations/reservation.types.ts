@@ -17,6 +17,8 @@ export interface NewReservation {
 
 export interface Reservation extends NewReservation {
   id: string;
+  /** Pedido al que pertenece cuando ya se pagó (nulo mientras no). */
+  orderId?: string | null;
   status: ReservationStatus;
   expiresAt: Date;
   createdAt: Date;

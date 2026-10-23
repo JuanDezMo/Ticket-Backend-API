@@ -33,7 +33,7 @@ describe('event cancellation with sold tickets', () => {
       .set(...bearer(token))
       .send(purchaseBody(reservation.id));
     expect(res.status).toBe(201);
-    return { token, ticketId: res.body.id as string };
+    return { token, ticketId: res.body.tickets[0].id as string };
   }
   const cancel = (id: string) =>
     request(ctx.app)
@@ -67,7 +67,11 @@ describe('event cancellation with sold tickets', () => {
     ).toBe(true);
     expect(tickets.find((t) => t.event_id === other.id)?.status).toBe('ISSUED');
 
-    const payments = await ctx.db.selectFrom('payments').select(['event_id', 'status']).execute();
+    const payments = await ctx.db
+      .selectFrom('payments')
+      .innerJoin('orders', 'orders.id', 'payments.order_id')
+      .select(['orders.event_id as event_id', 'payments.status as status'])
+      .execute();
     expect(payments.filter((p) => p.event_id === event.id).map((p) => p.status)).toEqual([
       'REFUND_PENDING',
       'REFUND_PENDING',

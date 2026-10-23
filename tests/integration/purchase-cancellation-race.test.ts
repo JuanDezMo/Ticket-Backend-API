@@ -79,8 +79,9 @@ describe('purchase versus event cancellation race', () => {
       expect(tickets.filter((t) => t.status === 'ISSUED')).toEqual([]);
       const payments = await ctx.db
         .selectFrom('payments')
-        .selectAll()
-        .where('event_id', '=', event.id)
+        .innerJoin('orders', 'orders.id', 'payments.order_id')
+        .selectAll('payments')
+        .where('orders.event_id', '=', event.id)
         .execute();
       expect(payments.filter((p) => p.status === 'APPROVED')).toEqual([]);
       // cada cobro aprobado por la pasarela quedó registrado

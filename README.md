@@ -46,6 +46,7 @@ pnpm dev
 | `PORT` | No | Puerto HTTP, por defecto 3000 |
 | `LOG_LEVEL` | No | `info` por defecto |
 | `RESERVATION_TTL_MINUTES` | No | Vigencia de una reserva en minutos, por defecto 10 |
+| `PAYMENT_CLAIM_SECONDS` | No | Segundos que las reservas quedan reclamadas mientras se cobra, por defecto 30; debe ser mayor que `PAYMENT_GATEWAY_TIMEOUT_MS` |
 | `MAX_ACTIVE_HOLDS_PER_USER` | No | Reservas activas que un usuario puede tener a la vez entre todos los eventos (entero ≥ 1), por defecto 8 |
 | `RESERVATION_EXPIRY_INTERVAL_SECONDS` | No | Frecuencia del job que libera reservas vencidas, por defecto 60 |
 | `SEED_ADMIN_EMAIL` | No | Email del primer ADMIN |
@@ -90,7 +91,7 @@ Un Jenkins local (`ci/jenkins/`) corre el `Jenkinsfile` en cada commit de `main`
 | `POST /reservations/:id/cancel` | USER | Cancela una reserva propia vigente y libera el seat (`CANCELLED_BY_USER`) |
 | `GET /reservations/:id` | USER | Consulta una reserva propia con su estado efectivo (`EXPIRED` si ya venció) |
 | `POST /events/:id/cancel` | ADMIN | Cancela el evento (no lo elimina): seats a `BLOCKED` y reservas `ACTIVE` a `CANCELLED`. Devuelve `{ id, status, cancelledReservations, cancelledTickets }` |
-| `POST /tickets/purchase` | USER | Paga una reserva y emite el ticket. Body: `reservationId` y `card` (`brand`, `number`, `expiry`, `cvv`). `201` al emitir; `200` con el mismo ticket si la reserva ya estaba pagada |
+| `POST /tickets/purchase` | USER | Paga de 1 a 8 reservas a la vez (todo o nada, un solo cobro) y emite un ticket por reserva. Body: `reservationIds` y `card` (`brand`, `number`, `expiry`, `cvv`). `201` con `{ orderId, amount, tickets }`; repetir una compra ya pagada responde `409 DUPLICATE_PAYMENT` |
 | `GET /tickets/me` | USER | Mis tickets, paginados (`page`, `pageSize` de 1 a 20), con los de eventos cancelados como `CANCELLED_BY_EVENT` |
 | `GET /events/:id/seats` | Autenticado | Seats del evento ordenados (`A1`, `A2`...). Query opcional: `status` (`AVAILABLE`, `RESERVED`, `SOLD`, `BLOCKED`) |
 
@@ -137,19 +138,19 @@ curl "localhost:3000/events/<EVENT_ID>/seats?status=AVAILABLE" -H "Authorization
 ```bash
 # Un USER reserva el seat C7 de un evento (el monto lo calcula el servidor)
 curl -X POST localhost:3000/reservations -H "Authorization: Bearer $USER_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"eventId":"<EVENT_ID>","seat":"C7"}'
+  -d '{"eventId":"<EVENT_ID>","seats":["C7","C8"]}'
 ```
 
 La reserva dura `RESERVATION_TTL_MINUTES`. Las reservas vencidas se liberan al reservar, al listar los seats del evento y por un job
 periódico, así que el seat vuelve a `AVAILABLE`. Respuestas de error: `404` `EVENT_NOT_FOUND` / `SEAT_NOT_FOUND`,
-`409` `SEAT_NOT_AVAILABLE` / `EVENT_NOT_ACTIVE`.
+`409` `SEAT_NOT_AVAILABLE` / `EVENT_NOT_ACTIVE` / `SEAT_LIMIT_REACHED` / `HOLD_LIMIT_REACHED`.
 
 ### Compra de tickets
 
 ```bash
 # El USER paga su reserva con tarjeta; el monto lo calcula el servidor (el del evento)
 curl -X POST localhost:3000/tickets/purchase -H "Authorization: Bearer $USER_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"reservationId":"<RESERVATION_ID>","card":{"brand":"VISA","number":"4111111111111111","expiry":"12/28","cvv":"123"}}'
+  -d '{"reservationIds":["<RESERVATION_ID>"],"card":{"brand":"VISA","number":"4111111111111111","expiry":"12/28","cvv":"123"}}'
 
 # Mis tickets
 curl "localhost:3000/tickets/me?page=1&pageSize=10" -H "Authorization: Bearer $USER_TOKEN"

@@ -24,6 +24,19 @@ export const ERROR_DEFINITIONS = {
   RESERVATION_ALREADY_CANCELLED: { status: 409, message: 'Reservation has already been cancelled' },
   RESERVATION_ALREADY_CONFIRMED: { status: 409, message: 'Reservation has already been paid' },
   EVENT_CANCELLED: { status: 409, message: 'Event has been cancelled' },
+  DUPLICATE_PAYMENT: {
+    status: 409,
+    message: 'These reservations were already paid. Check your tickets before paying again',
+  },
+  PAYMENT_IN_PROGRESS: {
+    status: 409,
+    message: 'Your payment is being processed. Try again in a few seconds',
+  },
+  RESERVATIONS_MISMATCH: { status: 400, message: 'The reservations must belong to the same event' },
+  ORDER_AMOUNT_TOO_LARGE: {
+    status: 400,
+    message: 'The order total exceeds the maximum allowed. Pay fewer seats at once',
+  },
   SEAT_LIMIT_REACHED: { status: 409, message: 'Seat limit per user reached for this event' },
   HOLD_LIMIT_REACHED: { status: 409, message: 'Too many seats on hold. Pay or cancel some first' },
   PAYMENT_REJECTED: { status: 402, message: 'Payment was rejected. Try another card' },

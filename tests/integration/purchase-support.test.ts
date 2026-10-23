@@ -40,14 +40,20 @@ describe('purchase support in repositories', () => {
     it('records payments and moves them to REFUND_PENDING', async () => {
       const repo = new KyselyPaymentRepository(ctx.db);
       const { event, res } = await reservation();
+      const order = await ctx.db
+        .insertInto('orders')
+        .values({ user_id: userId, event_id: event.id, amount: 150000 })
+        .returning('id')
+        .executeTakeFirstOrThrow();
       const payment = await repo.create({
-        reservationId: res.id,
-        userId,
-        eventId: event.id,
+        orderId: order.id,
         transactionId: 'txn-1',
         amount: 150000,
         status: 'APPROVED',
       });
+      expect(res.id).toBeDefined();
+      expect(await repo.existsByTransactionId('txn-1')).toBe(true);
+      expect(await repo.existsByTransactionId('txn-unknown')).toBe(false);
       expect(payment).toMatchObject({ transactionId: 'txn-1', amount: 150000, status: 'APPROVED' });
       expect(await repo.markRefundPending([payment.id])).toBe(1);
       const row = await ctx.db

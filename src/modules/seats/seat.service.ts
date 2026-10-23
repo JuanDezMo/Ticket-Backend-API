@@ -41,6 +41,10 @@ export class SeatService {
     return this.seats.markReserved(seatId, executor);
   }
 
+  markSoldMany(ids: string[], executor: Db): Promise<number> {
+    return this.seats.markSoldMany(ids, executor);
+  }
+
   markSold(seatId: string, executor: Db): Promise<boolean> {
     return this.seats.markSold(seatId, executor);
   }
