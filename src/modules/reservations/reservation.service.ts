@@ -207,6 +207,10 @@ export class ReservationService {
     return this.reservations.claimForPayment(ids, claimSeconds);
   }
 
+  hasRecentClaim(ids: string[], claimSeconds: number): Promise<boolean> {
+    return this.reservations.hasRecentClaim(ids, claimSeconds);
+  }
+
   releaseClaim(ids: string[]): Promise<void> {
     return this.reservations.releaseClaim(ids);
   }

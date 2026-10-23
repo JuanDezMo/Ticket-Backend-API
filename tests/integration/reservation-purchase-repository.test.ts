@@ -143,6 +143,18 @@ describe('reservation repository: purchase support', () => {
       expect(await claimOf(a!)).toBeNull();
     });
 
+    it('tells a real payment in progress from a stale or missing claim', async () => {
+      const [a, b] = await holds(2);
+      expect(await repo.hasRecentClaim([a!, b!], 30)).toBe(false);
+
+      await repo.claimForPayment([a!], 30);
+      expect(await repo.hasRecentClaim([a!, b!], 30)).toBe(true);
+      expect(await repo.hasRecentClaim([b!], 30)).toBe(false);
+
+      await setClaim(a!, 45);
+      expect(await repo.hasRecentClaim([a!], 30)).toBe(false);
+    });
+
     it('releases only the reservations indicated', async () => {
       const [a, b] = await holds(2);
       await repo.claimForPayment([a!, b!], 30);

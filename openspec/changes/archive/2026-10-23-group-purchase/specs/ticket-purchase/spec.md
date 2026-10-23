@@ -77,7 +77,110 @@ Si alguna de las reservas no se puede pagar, el sistema MUST rechazar la compra 
 - FROM: `### Requirement: Comprar una reserva`
 - TO: `### Requirement: Comprar reservas`
 - FROM: `### Requirement: Idempotencia de la compra`
-- TO: `### Requirement: Compra duplicada
+- TO: `### Requirement: Compra duplicada`
+
+## MODIFIED Requirements
+
+### Requirement: Comprar reservas
+El sistema SHALL exponer `POST /tickets/purchase`, restringido al rol `USER`, que recibe `reservationIds` (una lista de 1 a 8 reservas) y `card` (`brand`, `number`, `expiry`, `cvv`). Cuando la pasarela aprueba el pago, SHALL responder `201` con `{ orderId, amount, tickets: [...] }`, donde cada ticket es `{ id, reservationId, eventId, seat, status, amount, transactionId, issuedAt }` con `status` `ISSUED`, en el mismo orden de la solicitud; SHALL pasar cada seat a `SOLD` y cada reserva a `CONFIRMED`. La respuesta siempre es una lista, incluso con una sola reserva. El monto cobrado MUST ser la suma de las reservas (el precio del evento por cada una) y nunca un valor enviado por el cliente.
+
+#### Scenario: Compra exitosa
+- **WHEN** un USER paga con una tarjeta aprobada una reserva suya vigente
+- **THEN** el sistema responde `201` con `tickets` de un elemento `ISSUED`, el `amount` de la reserva y el `transactionId` de la pasarela; el seat queda `SOLD` y la reserva `CONFIRMED`
+
+#### Scenario: Compra de varias reservas
+- **WHEN** un USER paga tres reservas suyas vigentes con una tarjeta aprobada
+- **THEN** el sistema responde `201` con tres tickets y el `amount` total, la pasarela recibe una sola llamada y los tres seats quedan `SOLD`
+
+#### Scenario: Monto enviado por el cliente
+- **WHEN** la solicitud incluye un campo `amount`
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR` y no llama a la pasarela
+
+### Requirement: Acceso restringido
+El sistema MUST responder `401` con `code` `UNAUTHORIZED` si no hay token válido y `403` con `code` `FORBIDDEN` si el usuario no es `USER` o si alguna de las reservas pertenece a otro usuario. La pertenencia se valida antes que cualquier otro estado de las reservas.
+
+#### Scenario: Reserva de otro usuario
+- **WHEN** un USER intenta pagar, solo o junto a las suyas, la reserva de otro USER
+- **THEN** el sistema responde `403` con `code` `FORBIDDEN`, no llama a la pasarela y no modifica nada
+
+#### Scenario: ADMIN intenta comprar
+- **WHEN** un ADMIN llama a `POST /tickets/purchase`
+- **THEN** el sistema responde `403` con `code` `FORBIDDEN`
+
+#### Scenario: Sin token
+- **WHEN** se llama sin `Authorization`
+- **THEN** el sistema responde `401` con `code` `UNAUTHORIZED`
+
+### Requirement: Validación de la solicitud
+El sistema SHALL exigir `reservationIds` como una lista de 1 a 8 UUID sin repetidos y `card.number`, `card.expiry` y `card.cvv` como textos no vacíos, y MUST responder `400` con `code` `VALIDATION_ERROR` si falta alguno o hay campos adicionales, incluido el campo antiguo `reservationId`. Si falta `reservationIds`, el mensaje SHALL indicar que es obligatorio ("reservationIds: is required"). La validación del formato del número, el vencimiento y el CVV corresponde a la pasarela.
+
+#### Scenario: reservationId inválido
+- **WHEN** algún elemento de `reservationIds` es `abc`
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR`
+
+#### Scenario: Falta un dato de tarjeta
+- **WHEN** el cuerpo no incluye `card.cvv`
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR` y no llama a la pasarela
+
+#### Scenario: Campo antiguo reservationId
+- **WHEN** el cuerpo incluye `reservationId` en lugar de `reservationIds`
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR` y un mensaje que indica que `reservationIds` es obligatorio
+
+#### Scenario: Lista vacía o demasiado larga
+- **WHEN** `reservationIds` está vacía o tiene 9 elementos
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR`
+
+### Requirement: Reserva inexistente o no pagable
+El sistema MUST responder `404` con `code` `RESERVATION_NOT_FOUND` si alguna reserva no existe, `409` con `code` `EVENT_CANCELLED` si su evento está cancelado, `409` con `code` `RESERVATION_ALREADY_CANCELLED` si su dueño la canceló (`CANCELLED_BY_USER`), y `409` con `code` `RESERVATION_EXPIRED` si alguna reserva no está `ACTIVE` por otra causa o su `expiresAt` ya pasó (según la hora de la base de datos). Una reserva ya pagada (`CONFIRMED`) no entra aquí: se rechaza como compra duplicada. Se informa el primer problema, recorriendo las reservas en el orden de la solicitud. En esos casos no se llama a la pasarela.
+
+#### Scenario: Reserva desconocida
+- **WHEN** algún id de `reservationIds` es un UUID que no corresponde a ninguna reserva
+- **THEN** el sistema responde `404` con `code` `RESERVATION_NOT_FOUND`
+
+#### Scenario: Reserva vencida
+- **WHEN** alguna reserva tiene `expiresAt` en el pasado, aunque el job no la haya liberado aún
+- **THEN** el sistema responde `409` con `code` `RESERVATION_EXPIRED` y no llama a la pasarela
+
+#### Scenario: Reserva cancelada o expirada
+- **WHEN** alguna reserva está `EXPIRED` o `CANCELLED`
+- **THEN** el sistema responde `409` con `code` `RESERVATION_EXPIRED`
+
+#### Scenario: Reserva cancelada por el usuario
+- **WHEN** alguna reserva está `CANCELLED_BY_USER`
+- **THEN** el sistema responde `409` con `code` `RESERVATION_ALREADY_CANCELLED` y no llama a la pasarela
+
+#### Scenario: Evento cancelado
+- **WHEN** el evento de las reservas está `CANCELLED`
+- **THEN** el sistema responde `409` con `code` `EVENT_CANCELLED` y no llama a la pasarela
+
+### Requirement: Pago no aprobado
+Cuando la pasarela no aprueba el pago, el sistema MUST NOT emitir ningún ticket ni crear el pedido, y todas las reservas y seats MUST permanecer como estaban (`ACTIVE` y `RESERVED`), de modo que el usuario pueda hacer un nuevo intento mientras dure la reserva. Respuestas: pago rechazado → `402` `PAYMENT_REJECTED`; tarjeta con problemas → `422` `CARD_PROBLEM`; error de la pasarela → `502` `PAYMENT_GATEWAY_ERROR`; timeout → `504` `PAYMENT_GATEWAY_TIMEOUT`; datos de tarjeta inválidos → `400` `VALIDATION_ERROR` con el mensaje de la pasarela; API key rechazada por la pasarela → `500` `INTERNAL_ERROR` con mensaje genérico.
+
+#### Scenario: Pago rechazado
+- **WHEN** la pasarela responde `402`
+- **THEN** el sistema responde `402` con `code` `PAYMENT_REJECTED`, no hay tickets ni pedido y las reservas siguen `ACTIVE`
+
+#### Scenario: Tarjeta con problemas
+- **WHEN** la pasarela responde `422`
+- **THEN** el sistema responde `422` con `code` `CARD_PROBLEM`
+
+#### Scenario: Error de la pasarela
+- **WHEN** la pasarela responde `502`
+- **THEN** el sistema responde `502` con `code` `PAYMENT_GATEWAY_ERROR`, y el usuario puede hacer un nuevo intento
+
+#### Scenario: Timeout
+- **WHEN** la pasarela no responde dentro del tiempo límite
+- **THEN** el sistema responde `504` con `code` `PAYMENT_GATEWAY_TIMEOUT` y las reservas siguen `ACTIVE`
+
+#### Scenario: Datos de tarjeta inválidos
+- **WHEN** la pasarela responde `400` por formato inválido
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR` y el mensaje de la pasarela
+
+#### Scenario: Configuración inválida
+- **WHEN** la pasarela responde `401`
+- **THEN** el sistema responde `500` con `code` `INTERNAL_ERROR` y mensaje genérico, sin exponer la API key, y registra el incidente
+
+### Requirement: Compra duplicada
 Si alguna de las reservas de la solicitud ya está `CONFIRMED` (ya fue pagada), el sistema MUST responder `409` con `code` `DUPLICATE_PAYMENT` y el mensaje "These reservations were already paid. Check your tickets before paying again", sin llamar a la pasarela, sin crear otro pedido, otro pago ni otros tickets, y sin devolver los tickets existentes. Una solicitud que llega mientras otra del mismo conjunto todavía está cobrando recibe `PAYMENT_IN_PROGRESS`, no este error. Si, aun así, una solicitud cobra y al emitir encuentra reservas ya `CONFIRMED` (el reclamo venció durante un cobro lento), MUST responder `409` con `code` `DUPLICATE_PAYMENT` y, si el cobro tiene un `transactionId` distinto al del pedido existente, registrarlo como un pago `REFUND_PENDING` y dejar un aviso en el registro para conciliación.
 
 #### Scenario: Compra repetida

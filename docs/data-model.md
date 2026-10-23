@@ -187,7 +187,7 @@ Las tablas `users` y `seats` no cambian y se omiten los atributos que no cambian
 | Un seat tiene a lo sumo una reserva `ACTIVE` | Base de datos (índice único parcial, sin cambio) |
 | Un lote es todo o nada y comparte vencimiento | Servicio (una transacción) |
 | Un pedido cubre reservas del mismo usuario y del mismo evento, todas `ACTIVE` y vigentes al cobrar | Servicio |
-| Una reserva no se cobra dos veces a la vez: se reclama (`payment_started_at`) antes de llamar a la pasarela; si ya está reclamada, `PAYMENT_IN_PROGRESS` | Servicio (actualización atómica) y configuración (`PAYMENT_CLAIM_SECONDS` > tiempo límite de la pasarela) |
+| Una reserva no se cobra dos veces a la vez: se reclama (`payment_started_at`) antes de llamar a la pasarela; si ya está reclamada, `PAYMENT_IN_PROGRESS`; si el reclamo falla por otra causa (evento o reserva cancelados, reserva vencida), se informa esa causa | Servicio (actualización atómica) y configuración (`PAYMENT_CLAIM_SECONDS` > tiempo límite de la pasarela) |
 | Un cobro por pedido; un ticket por reserva | Base de datos (`payments.order_id` y `tickets.reservation_id` únicos) |
 | `orders.amount` = suma de `reservations.amount` de sus reservas | Servicio (el cliente nunca envía el monto) |
 | Si el evento se cancela con el cobro aprobado: no hay tickets y el pago queda `REFUND_PENDING` una sola vez por pedido | Servicio |

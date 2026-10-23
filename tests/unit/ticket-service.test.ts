@@ -82,6 +82,8 @@ function setup(overrides: Setup = {}) {
       .mockImplementation(async (ids: string[]) => overrides.confirmedCount ?? ids.length),
     attachToOrder: vi.fn().mockResolvedValue(undefined),
     claimForPayment: vi.fn().mockResolvedValue(overrides.claimed ?? true),
+    // Con el reclamo fallido, por defecto hay otro cobro real en curso
+    hasRecentClaim: vi.fn().mockResolvedValue(true),
     releaseClaim: vi.fn().mockResolvedValue(undefined),
   };
   const events = {
@@ -331,6 +333,73 @@ describe('TicketService.purchase', () => {
       });
       expect(reservations.claimForPayment).toHaveBeenCalledWith([R1, R2], 30);
       expect(payments.charge).not.toHaveBeenCalled();
+    });
+
+    describe('when the claim fails', () => {
+      const cancelledOnReread = (code: 'event' | 'cancelled' | 'expired') => {
+        const ctx = setup({ claimed: false });
+        // La primera lectura (antes del reclamo) las ve vigentes; la segunda, ya cambiadas
+        const first = ctx.reservations.findManyForPurchase.getMockImplementation()!;
+        ctx.reservations.findManyForPurchase
+          .mockImplementationOnce(first)
+          .mockImplementationOnce(async (ids: string[]) =>
+            ids.map((id) => ({
+              reservation: reservationOf(id, {
+                status: code === 'cancelled' ? 'CANCELLED_BY_USER' : 'ACTIVE',
+              }),
+              expired: code === 'expired',
+            })),
+          );
+        if (code === 'event') {
+          ctx.events.getById
+            .mockResolvedValueOnce({ id: 'event-1', status: 'ACTIVE' })
+            .mockResolvedValueOnce({ id: 'event-1', status: 'CANCELLED' });
+        }
+        return ctx;
+      };
+
+      it.each([
+        ['event', 'EVENT_CANCELLED'],
+        ['cancelled', 'RESERVATION_ALREADY_CANCELLED'],
+        ['expired', 'RESERVATION_EXPIRED'],
+      ] as const)(
+        'reports the real cause (%s) instead of a payment in progress',
+        async (cause, code) => {
+          const { service, payments, reservations } = cancelledOnReread(cause);
+          await expect(service.purchase('user-1', body([R1]))).rejects.toMatchObject({ code });
+          expect(reservations.hasRecentClaim).not.toHaveBeenCalled();
+          expect(payments.charge).not.toHaveBeenCalled();
+        },
+      );
+
+      it('keeps answering PAYMENT_IN_PROGRESS when another payment really holds the reservations', async () => {
+        const { service, reservations } = setup({ claimed: false });
+        await expect(service.purchase('user-1', body([R1, R2]))).rejects.toMatchObject({
+          code: 'PAYMENT_IN_PROGRESS',
+        });
+        // Sin esperar ni reintentar: hay un reclamo reciente
+        expect(reservations.claimForPayment).toHaveBeenCalledTimes(1);
+      });
+
+      it('tries again when the rows were only locked for an instant, and then charges', async () => {
+        const { service, payments, reservations } = setup();
+        reservations.claimForPayment.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        reservations.hasRecentClaim.mockResolvedValue(false);
+        await service.purchase('user-1', body([R1]));
+        expect(reservations.claimForPayment).toHaveBeenCalledTimes(2);
+        expect(payments.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('gives up with PAYMENT_IN_PROGRESS after a bounded number of attempts', async () => {
+        const { service, payments, reservations } = setup({ claimed: false });
+        reservations.hasRecentClaim.mockResolvedValue(false);
+        await expect(service.purchase('user-1', body([R1]))).rejects.toMatchObject({
+          code: 'PAYMENT_IN_PROGRESS',
+        });
+        expect(reservations.claimForPayment.mock.calls.length).toBeGreaterThan(1);
+        expect(reservations.claimForPayment.mock.calls.length).toBeLessThanOrEqual(9);
+        expect(payments.charge).not.toHaveBeenCalled();
+      });
     });
 
     it('claims before charging', async () => {

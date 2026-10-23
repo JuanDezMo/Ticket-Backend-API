@@ -52,6 +52,8 @@ export interface ReservationRepository {
   claimForPayment(ids: string[], claimSeconds: number): Promise<boolean>;
   /** Limpia el reclamo de las reservas indicadas. */
   releaseClaim(ids: string[]): Promise<void>;
+  /** Si alguna de las reservas tiene un reclamo de pago reciente (otro cobro realmente en curso). */
+  hasRecentClaim(ids: string[], claimSeconds: number): Promise<boolean>;
   /** SELECT ... FOR UPDATE: serializa compras simultáneas de la misma reserva. */
   lockById(id: string, executor: Db): Promise<Reservation | null>;
   /** ACTIVE -> CONFIRMED. Devuelve false si la reserva ya no estaba ACTIVE. */
@@ -235,6 +237,18 @@ export class KyselyReservationRepository implements ReservationRepository {
         if (error instanceof ClaimNotAvailable) return false;
         throw error;
       });
+  }
+
+  async hasRecentClaim(ids: string[], claimSeconds: number): Promise<boolean> {
+    if (ids.length === 0) return false;
+    const row = await this.db
+      .selectFrom('reservations')
+      .select('id')
+      .where('id', 'in', ids)
+      .where(sql<boolean>`payment_started_at >= now() - make_interval(secs => ${claimSeconds})`)
+      .limit(1)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   async releaseClaim(ids: string[]): Promise<void> {

@@ -6,7 +6,7 @@ import { EVENT_STATUSES } from '../events/event.types.js';
 import type { EventService } from '../events/event.service.js';
 import { parseCardBrand } from '../payments/card-brand.js';
 import type { PaymentService } from '../payments/payment.service.js';
-import { RESERVATION_STATUSES } from '../reservations/reservation.types.js';
+import { RESERVATION_STATUSES, type Reservation } from '../reservations/reservation.types.js';
 import type { ReservationService } from '../reservations/reservation.service.js';
 import type { OrderService } from '../orders/order.service.js';
 import type { SeatService } from '../seats/seat.service.js';
@@ -48,6 +48,14 @@ export function gatewayIdFor(reservationIds: string[]): string {
 }
 
 const CENTS = 100;
+
+// Si el reclamo falla pero nada cambió ni hay otro cobro, una transacción corta (cancelar el evento o
+// la reserva, el job de vencimiento) tiene las filas bloqueadas: se mira de nuevo en vez de acusar un pago
+const CLAIM_RECHECKS = 8;
+const CLAIM_RECHECK_MS = 50;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+type PurchaseItem = { reservation: Reservation; expired: boolean };
 
 interface Charged {
   orderUserId: string;
@@ -99,18 +107,7 @@ export class TicketService {
 
     // 3. El primer problema, recorriendo las reservas en el orden de la solicitud
     const event = await this.events.getById(eventId);
-    for (const { reservation, expired } of items) {
-      if (reservation.status === RESERVATION_STATUSES.CONFIRMED) {
-        throw new AppError('DUPLICATE_PAYMENT');
-      }
-      if (event.status !== EVENT_STATUSES.ACTIVE) throw new AppError('EVENT_CANCELLED');
-      if (reservation.status === RESERVATION_STATUSES.CANCELLED_BY_USER) {
-        throw new AppError('RESERVATION_ALREADY_CANCELLED');
-      }
-      if (reservation.status !== RESERVATION_STATUSES.ACTIVE || expired) {
-        throw new AppError('RESERVATION_EXPIRED');
-      }
-    }
+    this.assertPayable(items, event.status);
 
     // 4. El total, en centavos enteros (nunca sumando decimales de punto flotante)
     const cents = items.reduce(
@@ -121,9 +118,7 @@ export class TicketService {
     const amount = cents / CENTS;
 
     // 5. Reclamo atómico: si otra solicitud ya está cobrando alguna, no se llama a la pasarela
-    if (!(await this.reservations.claimForPayment(ids, this.claimSeconds))) {
-      throw new AppError('PAYMENT_IN_PROGRESS');
-    }
+    await this.claimOrExplain(ids, eventId);
 
     // 6. Cobro: una sola llamada, FUERA de cualquier transacción de BD
     let transactionId: string;
@@ -164,6 +159,42 @@ export class TicketService {
     }
     await this.reservations.releaseClaim(ids);
     throw new AppError(outcome.kind === 'refund' ? outcome.code : 'DUPLICATE_PAYMENT');
+  }
+
+  /** Lanza el primer problema de las reservas, en el orden de la solicitud; no hace nada si se pueden pagar. */
+  private assertPayable(items: PurchaseItem[], eventStatus: string): void {
+    for (const { reservation, expired } of items) {
+      if (reservation.status === RESERVATION_STATUSES.CONFIRMED) {
+        throw new AppError('DUPLICATE_PAYMENT');
+      }
+      if (eventStatus !== EVENT_STATUSES.ACTIVE) throw new AppError('EVENT_CANCELLED');
+      if (reservation.status === RESERVATION_STATUSES.CANCELLED_BY_USER) {
+        throw new AppError('RESERVATION_ALREADY_CANCELLED');
+      }
+      if (reservation.status !== RESERVATION_STATUSES.ACTIVE || expired) {
+        throw new AppError('RESERVATION_EXPIRED');
+      }
+    }
+  }
+
+  /**
+   * Reclama las reservas para cobrar. Si no se puede, dice la causa real: si algo cambió (evento
+   * cancelado, reserva cancelada o vencida) lanza ese error; `PAYMENT_IN_PROGRESS` solo si otro cobro
+   * las tiene reclamadas. Si las filas solo estaban bloqueadas un instante por otra transacción, vuelve
+   * a intentar un número acotado de veces.
+   */
+  private async claimOrExplain(ids: string[], eventId: string): Promise<void> {
+    for (let attempt = 0; attempt <= CLAIM_RECHECKS; attempt++) {
+      if (await this.reservations.claimForPayment(ids, this.claimSeconds)) return;
+      const found = await this.reservations.findManyForPurchase(ids);
+      const byId = new Map(found.map((item) => [item.reservation.id, item]));
+      const items = ids.map((id) => byId.get(id)).filter((item): item is PurchaseItem => !!item);
+      const event = await this.events.getById(eventId);
+      this.assertPayable(items, event.status);
+      if (await this.reservations.hasRecentClaim(ids, this.claimSeconds)) break;
+      await sleep(CLAIM_RECHECK_MS);
+    }
+    throw new AppError('PAYMENT_IN_PROGRESS');
   }
 
   listMine(userId: string, page: PaginationParams): Promise<Page<TicketListItem>> {

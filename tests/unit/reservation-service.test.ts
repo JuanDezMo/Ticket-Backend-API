@@ -82,6 +82,7 @@ function setup(
     markConfirmedMany: vi.fn().mockResolvedValue(0),
     attachToOrder: vi.fn().mockResolvedValue(undefined),
     claimForPayment: vi.fn().mockResolvedValue(true),
+    hasRecentClaim: vi.fn().mockResolvedValue(false),
     releaseClaim: vi.fn().mockResolvedValue(undefined),
     lockHoldsOf: vi.fn().mockResolvedValue(undefined),
     countHoldsForEvent: vi.fn().mockResolvedValue(overrides.heldInEvent ?? 0),

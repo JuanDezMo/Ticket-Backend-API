@@ -98,4 +98,79 @@ describe('purchase versus event cancellation race', () => {
       expect(active).toEqual([]);
     },
   );
+
+  describe('when the rows are locked by a transaction that is still open', () => {
+    const lockAndHold = async (reservationId: string, then: (trx: unknown) => Promise<void>) => {
+      let locked!: () => void;
+      const isLocked = new Promise<void>((resolve) => (locked = resolve));
+      let finish!: () => void;
+      const mayFinish = new Promise<void>((resolve) => (finish = resolve));
+      const tx = ctx.db.transaction().execute(async (trx) => {
+        await trx
+          .selectFrom('reservations')
+          .selectAll()
+          .where('id', '=', reservationId)
+          .forUpdate()
+          .execute();
+        locked();
+        await mayFinish;
+        await then(trx);
+      });
+      await isLocked;
+      return { finish, done: tx };
+    };
+
+    it('answers EVENT_CANCELLED, not a payment in progress, when the event is cancelled meanwhile', async () => {
+      const buyer = await reserveSeat(ctx.app, ctx.db, { seat: 'A1' });
+      const lock = await lockAndHold(buyer.reservation.id, async (trx) => {
+        const db = trx as typeof ctx.db;
+        await db
+          .updateTable('events')
+          .set({ status: 'CANCELLED' })
+          .where('id', '=', buyer.eventId)
+          .execute();
+        await db
+          .updateTable('reservations')
+          .set({ status: 'CANCELLED' })
+          .where('id', '=', buyer.reservation.id)
+          .execute();
+      });
+
+      const purchase = request(ctx.app)
+        .post('/tickets/purchase')
+        .set(...bearer(buyer.token))
+        .send(purchaseBody(buyer.reservation.id))
+        .then((res) => res);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      lock.finish();
+      await lock.done;
+      const res = await purchase;
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('EVENT_CANCELLED');
+      expect(gateway.calls).toHaveLength(0);
+    });
+
+    it('still pays when the lock is released without changing anything', async () => {
+      const buyer = await reserveSeat(ctx.app, ctx.db, { seat: 'A1' });
+      gateway.respondWith(async () => {
+        const { HttpResponse } = await import('msw');
+        return HttpResponse.json({ status: 'APPROVED', transactionId: 'txn-lock-1' });
+      });
+      const lock = await lockAndHold(buyer.reservation.id, async () => {});
+
+      const purchase = request(ctx.app)
+        .post('/tickets/purchase')
+        .set(...bearer(buyer.token))
+        .send(purchaseBody(buyer.reservation.id))
+        .then((res) => res);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      lock.finish();
+      await lock.done;
+      const res = await purchase;
+
+      expect(res.status).toBe(201);
+      expect(res.body.tickets).toHaveLength(1);
+    });
+  });
 });
