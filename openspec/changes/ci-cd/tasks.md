@@ -20,16 +20,16 @@
 - [x] 2.2 Crear `docker-compose.ci.yml` (decisión 7): `postgres:16` y `ticket-api` con `image: ticket-api:${TICKET_API_TAG:?}`, sin `ports` ni volúmenes con nombre, y variables de prueba (`JWT_SECRET`, `POSTGRES_PASSWORD`, `PAYMENT_GATEWAY_URL=http://payment-gateway.invalid:8080`, `PAYMENT_GATEWAY_API_KEY`) leídas del entorno. Verificar a mano con `docker build -t ticket-api:manual . && TICKET_API_TAG=manual ... docker compose -f docker-compose.ci.yml -p ticket-ci-manual up -d --wait`, y luego `down -v`
 - [x] 2.3 En `docker-compose.yml`, agregar `image: ticket-api:${TICKET_API_TAG:-local}` al servicio `ticket-api`, junto a `build: .`. Verificar que `docker compose up -d --build` sigue funcionando igual
 - [x] 2.4 Agregar `ci` a `.dockerignore`. Verificar que `docker build .` no incluye `ci/` en el contexto
-- [x] 2.5 Crear `Jenkinsfile` (decisiones 6, 7 y 8), sin timeout global (Test 15 min) y sin `triggers`, con las etapas Checkout, Install, Quality (parallel lint y arch), Build, Test (con `junit` en `post { always }`), Image, Smoke (con `down -v` en `post { always }` y logs del contenedor si falla) y Deploy (sin `when { branch }`, porque el job ya está atado a `main`; `input` de etapa con `timeout` de etapa de 30 min, `withCredentials([file(credentialsId: 'ticket-api-env', ...)])`, `up -d --no-build ticket-api` y espera de `healthy` de 60 s). Los secretos del smoke test se generan en el build (`openssl rand -hex 32`) en un `smoke.env` del workspace con `umask 077`, que usan tanto `up` como `down -v`, y no se imprimen. Verificar la sintaxis con el linter declarativo de Jenkins (`curl -X POST -F "jenkinsfile=<Jenkinsfile" .../pipeline-model-converter/validate`)
+- [x] 2.5 Crear `Jenkinsfile` (decisiones 6, 7 y 8), sin timeout global (Test 15 min) y sin `triggers`, con las etapas Checkout, Install, Quality (parallel lint y arch), Build, Test (con `junit` en `post { always }`), Image, Smoke (con `down -v` en `post { always }` y logs del contenedor si falla) y Deploy (sin `when { branch }`, porque el job ya está atado a `main`; `input` dentro de los `steps` con `timeout` de etapa de 30 min, `withCredentials([file(credentialsId: 'ticket-api-env', ...)])`, `up -d --no-build ticket-api` y espera de `healthy` de 60 s). Los secretos del smoke test se generan en el build (`openssl rand -hex 32`) en un `smoke.env` del workspace con `umask 077`, que usan tanto `up` como `down -v`, y no se imprimen. Verificar la sintaxis con el linter declarativo de Jenkins (`curl -X POST -F "jenkinsfile=<Jenkinsfile" .../pipeline-model-converter/validate`)
 
 ## 3. Validación de punta a punta
 
-- [ ] 3.1 Con los archivos commiteados por el usuario, lanzar el job `ticket-api` y comprobar:
+- [x] 3.1 Con los archivos commiteados por el usuario, lanzar el job `ticket-api` y comprobar:
   - todas las etapas pasan hasta el `input`;
   - el reporte JUnit muestra las ~516 pruebas;
   - existe `ticket-api:<commit corto>`;
   - no quedan contenedores ni volúmenes `ticket-ci-*`.
-- [ ] 3.2 Aprobar el despliegue y comprobar que `ticket_backend_api-ticket-api-1` corre `ticket-api:<commit corto>` y queda `healthy`, que `curl localhost:3000/health` responde `UP` y que los datos existentes (eventos anteriores) siguen en `GET /events`
+- [x] 3.2 Aprobar el despliegue y comprobar que `ticket_backend_api-ticket-api-1` corre `ticket-api:<commit corto>` y queda `healthy`, que `curl localhost:3000/health` responde `UP` y que los datos existentes (eventos anteriores) siguen en `GET /events`
 - [ ] 3.3 Casos negativos:
   - romper una prueba en una rama temporal o en un commit local revertible: el build falla en Test y no llega a Image;
   - dejar vencer el `input` (o abortarlo): el contenedor desplegado no cambia;

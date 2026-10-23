@@ -12,6 +12,7 @@ const input = {
   venue: 'Hall',
   price: 150000,
   capacity: 25,
+  maxSeatsPerUser: 4,
   startDate: new Date(Date.now() + 86_400_000),
   endDate: new Date(Date.now() + 90_000_000),
 };

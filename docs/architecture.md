@@ -201,7 +201,7 @@ Reglas que hace cumplir `dependency-cruiser`:
 | `POST /auth/login` | 200 | 400, 401 credenciales inválidas |
 | `POST /users` (ADMIN) | 201 | 400, 401, 403, 409 email ya existe |
 | `GET /events` (público) | 200 | 400 paginación o filtros inválidos (`pageSize` fuera de 1 a 20, `page` menor a 1, tipo o fechas inválidos) |
-| `POST /events` (ADMIN) | 201 | 400, 401, 403 |
+| `POST /events` (ADMIN) | 201 | 400 (incluido `maxSeatsPerUser` ausente, fuera de 1 a 8 o mayor que `capacity`), 401, 403 |
 | `GET /events/:id` (público) | 200 | 400 (id inválido), 404 `EVENT_NOT_FOUND` |
 | `GET /events/:id/seats` | 200 | 401, 404 |
 | `POST /events/:id/cancel` (ADMIN) | 200 | 400 (id inválido), 401, 403, 404 `EVENT_NOT_FOUND`, 409 `EVENT_ALREADY_CANCELLED` o `EVENT_ALREADY_ENDED` |
@@ -253,7 +253,7 @@ Otros `ErrorCode`: `CARD_BRAND_REQUIRED` y `CARD_BRAND_NOT_ALLOWED` (400), `UNAU
 ```json
 {
   "id": "uuid", "name": "Rock Night", "description": "...", "type": "CONCERT",
-  "venue": "Main Hall", "price": 150000, "capacity": 100,
+  "venue": "Main Hall", "price": 150000, "capacity": 100, "maxSeatsPerUser": 4,
   "startDate": "2026-12-01T20:00:00Z", "endDate": "2026-12-01T23:00:00Z",
   "createdAt": "2026-10-20T15:00:00Z", "status": "ACTIVE"
 }

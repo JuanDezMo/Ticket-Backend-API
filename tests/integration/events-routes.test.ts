@@ -39,6 +39,7 @@ describe('events routes', () => {
         venue: 'Main Hall',
         price: 150000,
         capacity: 20,
+        maxSeatsPerUser: 4,
         startDate: expect.any(String),
         endDate: expect.any(String),
         createdAt: expect.any(String),
@@ -55,6 +56,47 @@ describe('events routes', () => {
         (await ctx.db.selectFrom('seats').select('id').where('event_id', '=', id).execute()).length;
       expect(await count(small.body.id)).toBe(20);
       expect(await count(big.body.id)).toBe(100);
+    });
+
+    it.each([1, 8])('creates an event with the limit per user at %i', async (limit) => {
+      const res = await create(adminToken, eventBody({ capacity: 20, maxSeatsPerUser: limit }));
+      expect(res.status).toBe(201);
+      expect(res.body.maxSeatsPerUser).toBe(limit);
+      const stored = await ctx.db
+        .selectFrom('events')
+        .select('max_seats_per_user')
+        .where('id', '=', res.body.id)
+        .executeTakeFirstOrThrow();
+      expect(stored.max_seats_per_user).toBe(limit);
+    });
+
+    it('keeps a different limit per event', async () => {
+      const a = await create(adminToken, eventBody({ maxSeatsPerUser: 2 }));
+      const b = await create(adminToken, eventBody({ name: 'Other', maxSeatsPerUser: 8 }));
+      expect([a.body.maxSeatsPerUser, b.body.maxSeatsPerUser]).toEqual([2, 8]);
+    });
+
+    it.each([0, 9])('returns 400 for a limit of %i and creates nothing', async (limit) => {
+      const res = await create(adminToken, eventBody({ maxSeatsPerUser: limit }));
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+      expect(await ctx.db.selectFrom('events').selectAll().execute()).toHaveLength(0);
+    });
+
+    it('returns 400 saying the limit is required when it is missing', async () => {
+      const res = await create(adminToken, eventBody({ maxSeatsPerUser: undefined }));
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+      expect(res.body.message).toContain('maxSeatsPerUser: is required');
+      expect(await ctx.db.selectFrom('events').selectAll().execute()).toHaveLength(0);
+    });
+
+    it('returns 400 when the limit exceeds the capacity and accepts it equal', async () => {
+      const over = await create(adminToken, eventBody({ capacity: 4, maxSeatsPerUser: 5 }));
+      expect(over.status).toBe(400);
+      expect(over.body.message).toContain('must not exceed capacity');
+      const equal = await create(adminToken, eventBody({ capacity: 4, maxSeatsPerUser: 4 }));
+      expect(equal.status).toBe(201);
     });
 
     it('returns 403 FORBIDDEN for a USER and creates nothing', async () => {
@@ -88,6 +130,21 @@ describe('events routes', () => {
       expect(await ctx.db.selectFrom('events').selectAll().execute()).toHaveLength(0);
     });
 
+    it('does not expose any operation to modify the limit either', async () => {
+      const { body } = await create(adminToken, eventBody());
+      const res = await request(ctx.app)
+        .patch(`/events/${body.id}`)
+        .set(...bearer(adminToken))
+        .send({ maxSeatsPerUser: 2 });
+      expect(res.status).toBe(404);
+      const stored = await ctx.db
+        .selectFrom('events')
+        .select('max_seats_per_user')
+        .where('id', '=', body.id)
+        .executeTakeFirstOrThrow();
+      expect(stored.max_seats_per_user).toBe(4);
+    });
+
     it('does not expose any operation to modify an event', async () => {
       const { body } = await create(adminToken, eventBody());
       for (const method of ['put', 'patch', 'delete'] as const) {
@@ -106,6 +163,24 @@ describe('events routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
       expect(res.body.meta).toEqual({ page: 1, pageSize: 20, total: 1, totalPages: 1 });
+    });
+
+    it('includes maxSeatsPerUser in each listed event, including a cancelled one', async () => {
+      await insertEvent(ctx.db, { name: 'Min', capacity: 10, max_seats_per_user: 1 });
+      await insertEvent(ctx.db, {
+        name: 'Max',
+        capacity: 10,
+        max_seats_per_user: 8,
+        status: 'CANCELLED',
+      });
+      const res = await request(ctx.app).get('/events');
+      const limits = Object.fromEntries(
+        res.body.data.map((e: { name: string; maxSeatsPerUser: number }) => [
+          e.name,
+          e.maxSeatsPerUser,
+        ]),
+      );
+      expect(limits).toEqual({ Min: 1, Max: 8 });
     });
 
     it('returns an empty list with total 0 when there are no events', async () => {
@@ -205,6 +280,18 @@ describe('events routes', () => {
         (e: { id: string }) => e.id === id,
       );
       expect(res.body).toEqual(listed);
+    });
+
+    it('returns maxSeatsPerUser in the detail of an active and a cancelled event', async () => {
+      const active = await insertEvent(ctx.db, { capacity: 10, max_seats_per_user: 1 });
+      const cancelled = await insertEvent(ctx.db, {
+        capacity: 10,
+        max_seats_per_user: 8,
+        status: 'CANCELLED',
+      });
+      const a = await request(ctx.app).get(`/events/${active.id}`);
+      const c = await request(ctx.app).get(`/events/${cancelled.id}`);
+      expect([a.body.maxSeatsPerUser, c.body.maxSeatsPerUser]).toEqual([1, 8]);
     });
 
     it('returns a cancelled event with its status', async () => {

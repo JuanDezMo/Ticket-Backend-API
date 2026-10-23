@@ -19,6 +19,7 @@ export interface Events {
   description: string;
   end_date: Timestamp;
   id: Generated<string>;
+  max_seats_per_user: number;
   name: string;
   price: Numeric;
   start_date: Timestamp;

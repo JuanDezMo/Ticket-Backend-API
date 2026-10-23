@@ -68,6 +68,18 @@ TICKET_API_TAG=<commit anterior> docker compose -p ticket_backend_api up -d --no
 
 Las migraciones no se revierten solas. Si la versión anterior no conoce una migración nueva, revisarla antes de volver atrás.
 
+## 7. Cambios que recrean la base de datos
+
+El despliegue (sección 5) **conserva** el volumen de PostgreSQL, y las migraciones aplicadas no se vuelven a ejecutar. Cuando un cambio **edita una migración existente** (en lugar de agregar una nueva), el entorno desplegado conserva el esquema viejo y la nueva versión falla. Esos cambios exigen recrear la base **una sola vez**, antes de desplegar:
+
+```bash
+docker compose -p ticket_backend_api down -v      # borra el volumen: se pierden todos los datos
+docker compose -p ticket_backend_api up -d --build
+```
+
+- **`event-seat-limit`** edita `002-create-events` (columna `max_seats_per_user`). El smoke test no lo detecta porque usa una base efímera.
+- Se avisa antemano a quien use el entorno: se pierden eventos, reservas, tickets y usuarios (el ADMIN semilla se vuelve a crear con `SEED_ADMIN_EMAIL`).
+
 ## 7. Limpieza de imágenes
 
 Cada build deja una imagen `ticket-api:<commit>`. Para borrar las que no usa ningún contenedor:

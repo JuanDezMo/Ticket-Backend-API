@@ -14,6 +14,7 @@ export function toPublicEvent(event: Event): PublicEvent {
     venue: event.venue,
     price: event.price,
     capacity: event.capacity,
+    maxSeatsPerUser: event.maxSeatsPerUser,
     startDate: event.startDate.toISOString(),
     endDate: event.endDate.toISOString(),
     createdAt: event.createdAt.toISOString(),

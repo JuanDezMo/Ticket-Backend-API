@@ -16,6 +16,9 @@ export const EVENT_STATUS_VALUES = Object.values(EVENT_STATUSES) as [EventStatus
 // numeric(12,2): hasta 9.999.999.999,99
 export const MAX_PRICE = 9_999_999_999.99;
 
+/** Máximo de seats por usuario que un evento puede permitir (RN-EVT-8). */
+export const MAX_SEATS_PER_USER = 8;
+
 export interface NewEvent {
   name: string;
   description: string;
@@ -23,6 +26,7 @@ export interface NewEvent {
   venue: string;
   price: number;
   capacity: number;
+  maxSeatsPerUser: number;
   startDate: Date;
   endDate: Date;
 }
@@ -42,6 +46,7 @@ export interface PublicEvent {
   venue: string;
   price: number;
   capacity: number;
+  maxSeatsPerUser: number;
   startDate: string;
   endDate: string;
   createdAt: string;

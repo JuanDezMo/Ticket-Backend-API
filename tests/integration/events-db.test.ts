@@ -22,6 +22,42 @@ describe('events and seats schema', () => {
     await expect(insertEvent(ctx.db, { capacity: 260 })).resolves.toBeDefined();
   });
 
+  it('accepts the limit per user at its bounds (1 and 8)', async () => {
+    const min = await insertEvent(ctx.db, { capacity: 10, max_seats_per_user: 1 });
+    const max = await insertEvent(ctx.db, { capacity: 10, max_seats_per_user: 8 });
+    expect([min.max_seats_per_user, max.max_seats_per_user]).toEqual([1, 8]);
+  });
+
+  it('rejects a limit of 0, 9, null or greater than the capacity', async () => {
+    await expect(insertEvent(ctx.db, { capacity: 10, max_seats_per_user: 0 })).rejects.toThrow();
+    await expect(insertEvent(ctx.db, { capacity: 20, max_seats_per_user: 9 })).rejects.toThrow();
+    await expect(insertEvent(ctx.db, { capacity: 4, max_seats_per_user: 5 })).rejects.toThrow();
+    await expect(
+      ctx.db
+        .insertInto('events')
+        .values({
+          name: 'No limit',
+          description: 'd',
+          type: 'CONCERT',
+          venue: 'v',
+          price: 100,
+          capacity: 10,
+          start_date: new Date(Date.now() + 86_400_000),
+          end_date: new Date(Date.now() + 90_000_000),
+        } as never)
+        .execute(),
+    ).rejects.toThrow();
+  });
+
+  it('accepts a limit equal to the capacity', async () => {
+    await expect(
+      insertEvent(ctx.db, { capacity: 4, max_seats_per_user: 4 }),
+    ).resolves.toBeDefined();
+    await expect(
+      insertEvent(ctx.db, { capacity: 1, max_seats_per_user: 1 }),
+    ).resolves.toBeDefined();
+  });
+
   it('rejects an invalid type, status or dates', async () => {
     await expect(insertEvent(ctx.db, { type: 'FESTIVAL' })).rejects.toThrow();
     await expect(insertEvent(ctx.db, { status: 'DELETED' })).rejects.toThrow();

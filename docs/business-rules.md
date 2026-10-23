@@ -53,6 +53,7 @@ Campos:
 | `venue` | Obligatorio |
 | `price` | Precio por ticket, mayor a 0 |
 | `capacity` | Paramétrica por evento (ej. 20, 100). Entero entre 1 y 260 |
+| `maxSeatsPerUser` | Máximo de seats que un usuario puede tener reservados o comprados en el evento. Entero entre 1 y 8, no mayor que `capacity`. Obligatorio, sin valor por defecto |
 | `startDate` | Fecha y hora de inicio |
 | `endDate` | Fecha y hora de fin |
 | `createdAt` | Asignada por el sistema al crear el evento |
@@ -67,6 +68,7 @@ Campos:
 | RN-EVT-5 | Un evento `CANCELLED` sigue visible en el listado con su estado. |
 | RN-EVT-6 | Se puede reservar y comprar solo mientras el evento esté `ACTIVE` y no haya llegado `startDate`. |
 | RN-EVT-7 | El listado de eventos es paginado: `pageSize` entre 1 y 20 (por defecto 20); un valor mayor se rechaza con `400`, no se recorta. Admite filtros por estado, tipo, rango de `startDate` y texto en el nombre. |
+| RN-EVT-8 | `maxSeatsPerUser` lo define el ADMIN al crear el evento, es obligatorio (sin valor por defecto), va de 1 a 8, no puede superar `capacity` y no se puede cambiar después. Esta regla solo guarda y expone el valor; aplicarlo al reservar es el cambio `seat-limit-enforcement`. |
 
 ## 4. Seats
 

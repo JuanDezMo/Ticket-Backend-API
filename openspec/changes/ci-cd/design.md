@@ -83,6 +83,7 @@ Si una etapa falla, las siguientes no corren.
 
 ### 8. Despliegue local con aprobación
 - El job está atado a la rama `main` en `casc.yaml`, así que todo build es de `main`. No se usa `when { branch 'main' }`, que solo funciona en Multibranch Pipeline (depende de `BRANCH_NAME`).
+- El `input` va dentro de los `steps` y no como directiva `input {}` de la etapa: la directiva se evalúa antes de que `IMAGE_TAG` (calculada en Checkout) esté disponible, y el mensaje mostraba `ticket-api:null` (detectado en el primer build).
 - Después de un `input` ("¿Desplegar ticket-api:<tag>?") con un tiempo de espera de 30 minutos. Si nadie aprueba, el build termina como *aborted* y no como fallido.
 - Comando: `docker compose -p ticket_backend_api --env-file <credencial ticket-api-env> -f docker-compose.yml up -d --no-build ticket-api`, con `TICKET_API_TAG=${IMAGE_TAG}`.
   - Usa el mismo nombre de proyecto que el stack manual del usuario, así que reemplaza ese contenedor y reutiliza el volumen `postgres_data`.

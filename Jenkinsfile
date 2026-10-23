@@ -115,11 +115,10 @@ pipeline {
         // Si nadie aprueba en 30 minutos, el build queda abortado y no se despliega
         timeout(time: 30, unit: 'MINUTES')
       }
-      input {
-        message "¿Desplegar ticket-api:${env.IMAGE_TAG} en el entorno local?"
-        ok 'Desplegar'
-      }
       steps {
+        // El input va en los steps y no como directiva de la etapa: la directiva se evalúa antes
+        // de que IMAGE_TAG (calculada en Checkout) esté disponible y el mensaje mostraría "null"
+        input message: "¿Desplegar ticket-api:${env.IMAGE_TAG} en el entorno local?", ok: 'Desplegar'
         withCredentials([file(credentialsId: 'ticket-api-env', variable: 'DEPLOY_ENV')]) {
           // Mismo proyecto que el stack manual: reemplaza el contenedor y conserva el volumen de PostgreSQL
           sh '''

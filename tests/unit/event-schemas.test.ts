@@ -16,6 +16,7 @@ const valid = {
   venue: 'Hall',
   price: 150000,
   capacity: 20,
+  maxSeatsPerUser: 4,
   startDate: '2026-02-01T20:00:00Z',
   endDate: '2026-02-01T23:00:00Z',
 };
@@ -49,9 +50,57 @@ describe('createEventSchema', () => {
   });
 
   it('accepts capacity 1 and 260 and a price with 2 decimals', () => {
-    expect(schema.safeParse({ ...valid, capacity: 1 }).success).toBe(true);
+    // Con capacidad 1 el límite por usuario solo puede ser 1
+    expect(schema.safeParse({ ...valid, capacity: 1, maxSeatsPerUser: 1 }).success).toBe(true);
     expect(schema.safeParse({ ...valid, capacity: 260 }).success).toBe(true);
     expect(schema.safeParse({ ...valid, price: 19.99 }).success).toBe(true);
+  });
+});
+
+describe('createEventSchema: maxSeatsPerUser', () => {
+  const messageOf = (override: Record<string, unknown>) => {
+    const result = schema.safeParse({ ...valid, ...override });
+    return result.success
+      ? null
+      : result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
+  };
+
+  it.each([1, 8])('accepts the limit value %i', (value) => {
+    expect(schema.safeParse({ ...valid, maxSeatsPerUser: value }).success).toBe(true);
+  });
+
+  it.each([0, 9, -1, 2.5])('rejects %s as out of range', (value) => {
+    expect(messageOf({ maxSeatsPerUser: value })).toEqual([
+      'maxSeatsPerUser: must be an integer from 1 to 8',
+    ]);
+  });
+
+  it('rejects a text value', () => {
+    expect(messageOf({ maxSeatsPerUser: '4' })).toEqual([
+      'maxSeatsPerUser: must be an integer from 1 to 8',
+    ]);
+  });
+
+  it('says the field is required when it is missing or null-like', () => {
+    const withoutLimit = { ...valid, maxSeatsPerUser: undefined };
+    const result = schema.safeParse(withoutLimit);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`)).toEqual([
+      'maxSeatsPerUser: is required',
+    ]);
+  });
+
+  it('rejects a limit greater than the capacity and accepts it equal', () => {
+    expect(messageOf({ capacity: 4, maxSeatsPerUser: 5 })).toEqual([
+      'maxSeatsPerUser: must not exceed capacity',
+    ]);
+    expect(schema.safeParse({ ...valid, capacity: 4, maxSeatsPerUser: 4 }).success).toBe(true);
+    expect(schema.safeParse({ ...valid, capacity: 1, maxSeatsPerUser: 1 }).success).toBe(true);
+  });
+
+  it('accepts the maximum limit with a capacity of at least 8', () => {
+    expect(schema.safeParse({ ...valid, capacity: 8, maxSeatsPerUser: 8 }).success).toBe(true);
+    expect(schema.safeParse({ ...valid, capacity: 260, maxSeatsPerUser: 8 }).success).toBe(true);
   });
 });
 

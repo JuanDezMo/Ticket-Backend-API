@@ -105,7 +105,7 @@ if [ -z "$ADM" ] || [ "$ADM" = "undefined" ]; then echo "No se pudo iniciar sesi
 START_DATE=$(date -u -d '+1 year' +%Y-%m-%dT20:00:00Z 2>/dev/null || date -u -v+1y +%Y-%m-%dT20:00:00Z)
 END_DATE=${START_DATE/T20/T23}
 EV=$(curl -s -X POST "$API/events" -H "Authorization: Bearer $ADM" -H "$J" \
-  -d "{\"name\":\"Suite pasarela real $(date +%F-%H%M%S)\",\"description\":\"Datos de prueba\",\"type\":\"CONCERT\",\"venue\":\"Hall\",\"price\":75000,\"capacity\":20,\"startDate\":\"$START_DATE\",\"endDate\":\"$END_DATE\"}" | field id)
+  -d "{\"name\":\"Suite pasarela real $(date +%F-%H%M%S)\",\"description\":\"Datos de prueba\",\"type\":\"CONCERT\",\"venue\":\"Hall\",\"price\":75000,\"capacity\":20,\"maxSeatsPerUser\":4,\"startDate\":\"$START_DATE\",\"endDate\":\"$END_DATE\"}" | field id)
 [ -n "$EV" ] && [ "$EV" != "undefined" ] || { echo "No se pudo crear el evento de prueba."; exit 2; }
 echo "  evento de prueba: $EV"
 

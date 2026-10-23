@@ -13,6 +13,7 @@ const baseEvent: Event = {
   venue: 'v',
   price: 100,
   capacity: 20,
+  maxSeatsPerUser: 4,
   startDate: new Date('2026-07-01T20:00:00Z'),
   endDate: new Date('2026-07-01T23:00:00Z'),
   status: 'ACTIVE',

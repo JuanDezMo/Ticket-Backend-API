@@ -17,6 +17,7 @@ export function eventBody(overrides: Record<string, unknown> = {}) {
     venue: 'Main Hall',
     price: 150000,
     capacity: 20,
+    maxSeatsPerUser: 4,
     startDate: futureDate(30),
     endDate: futureDate(30, 23),
     ...overrides,
@@ -31,6 +32,7 @@ export async function insertEvent(
     type: string;
     status: string;
     capacity: number;
+    max_seats_per_user: number;
     price: number;
     start_date: string;
     end_date: string;
@@ -45,6 +47,7 @@ export async function insertEvent(
       venue: 'Venue',
       price: 100,
       capacity: 10,
+      max_seats_per_user: Math.min(4, overrides.capacity ?? 10),
       start_date: futureDate(10),
       end_date: futureDate(10, 23),
       ...overrides,

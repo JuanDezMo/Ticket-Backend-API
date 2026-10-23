@@ -31,6 +31,7 @@ function toEvent(row: Selectable<Events>): Event {
     venue: row.venue,
     price: Number(row.price), // numeric llega como string desde pg
     capacity: row.capacity,
+    maxSeatsPerUser: row.max_seats_per_user,
     startDate: row.start_date,
     endDate: row.end_date,
     status: row.status as EventStatus,
@@ -51,6 +52,7 @@ export class KyselyEventRepository implements EventRepository {
         venue: event.venue,
         price: event.price,
         capacity: event.capacity,
+        max_seats_per_user: event.maxSeatsPerUser,
         start_date: event.startDate,
         end_date: event.endDate,
       })

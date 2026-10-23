@@ -80,7 +80,7 @@ Un Jenkins local (`ci/jenkins/`) corre el `Jenkinsfile` en cada commit de `main`
 | `POST /auth/register` | Público | Crea un usuario `USER`. Body: `email`, `password` (mínimo 8). No acepta `role` |
 | `POST /auth/login` | Público | Devuelve `accessToken`, `tokenType` y `expiresIn` |
 | `POST /users` | ADMIN | Crea un usuario `USER` o `ADMIN`. Body: `email`, `password`, `role` |
-| `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `startDate`, `endDate` |
+| `POST /events` | ADMIN | Crea un evento y genera sus seats. Body: `name`, `description`, `type`, `venue`, `price`, `capacity` (1 a 260), `maxSeatsPerUser` (1 a 8, obligatorio, no mayor que `capacity`), `startDate`, `endDate` |
 | `GET /events` | Público | Lista eventos (incluye cancelados) paginados. Query: `page`, `pageSize` (1 a 20), `status`, `type`, `startFrom`, `startTo`, `search` |
 | `GET /events/:id` | Público | Detalle de un evento (incluye cancelados) |
 | `POST /reservations` | USER | Reserva un seat. Body: `eventId` y `seat` (etiqueta `A`-`Z` + `1`-`10`, por ejemplo `C7`). Devuelve la reserva con `amount` (precio del evento, calculado por el servidor) y `expiresAt` |
@@ -120,7 +120,7 @@ curl -X POST localhost:3000/auth/register -H 'Content-Type: application/json' \
 ```bash
 # El ADMIN crea un evento de 25 puestos (las fechas deben ser futuras)
 curl -X POST localhost:3000/events -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"Rock Night","description":"Concierto","type":"CONCERT","venue":"Main Hall","price":150000,"capacity":25,"startDate":"2027-01-15T20:00:00Z","endDate":"2027-01-15T23:00:00Z"}'
+  -d '{"name":"Rock Night","description":"Concierto","type":"CONCERT","venue":"Main Hall","price":150000,"capacity":25,"maxSeatsPerUser":4,"startDate":"2027-01-15T20:00:00Z","endDate":"2027-01-15T23:00:00Z"}'
 
 # Listado público con filtros y paginación
 curl "localhost:3000/events?type=CONCERT&search=rock&page=1&pageSize=10"

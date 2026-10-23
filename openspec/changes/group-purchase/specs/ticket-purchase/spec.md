@@ -1,0 +1,112 @@
+## ADDED Requirements
+
+### Requirement: Pedido de una compra
+Cada compra aprobada SHALL crear un pedido con el usuario, el evento y el monto total (la suma de los montos de sus reservas, calculada por el servidor). El pedido SHALL tener un único pago y un ticket por cada reserva, y las reservas pagadas SHALL quedar asociadas a él. Todas las reservas de un pedido MUST ser del mismo usuario y del mismo evento.
+
+#### Scenario: Monto del pedido
+- **WHEN** un USER paga tres reservas de 150000 cada una
+- **THEN** el pedido tiene `amount` 450000, un solo pago por ese monto y tres tickets de 150000
+
+#### Scenario: Reservas de eventos distintos
+- **WHEN** la solicitud incluye reservas de dos eventos distintos
+- **THEN** el sistema responde `400` con `code` `RESERVATIONS_MISMATCH`, no llama a la pasarela y no modifica nada
+
+#### Scenario: Una sola reserva
+- **WHEN** se paga una sola reserva
+- **THEN** se crea un pedido con esa reserva y un ticket
+
+### Requirement: Pago en curso
+Antes de llamar a la pasarela, el sistema SHALL reclamar todas las reservas de la compra de forma atómica. Si alguna ya tiene un pago en curso (reclamada hace menos de `PAYMENT_CLAIM_SECONDS`, 30 por defecto), MUST responder `409` con `code` `PAYMENT_IN_PROGRESS` y el mensaje "Your payment is being processed. Try again in a few seconds", sin llamar a la pasarela y sin reclamar ninguna. Esto aplica también a conjuntos que se solapan parcialmente. El reclamo SHALL liberarse cuando el pago termina sin ticket por rechazo (`PAYMENT_REJECTED`), tarjeta con problemas (`CARD_PROBLEM`), error de la pasarela (`PAYMENT_GATEWAY_ERROR`), datos inválidos o configuración inválida, de modo que el usuario pueda hacer un nuevo intento de inmediato. Tras un timeout (`PAYMENT_GATEWAY_TIMEOUT`) SHALL mantenerse hasta vencer por tiempo, porque el resultado del cobro es desconocido. Si el proceso se interrumpe, el reclamo vence solo. `PAYMENT_CLAIM_SECONDS` MUST ser mayor que el tiempo límite de la pasarela.
+
+#### Scenario: Dos solicitudes simultáneas
+- **WHEN** dos solicitudes pagan a la vez las mismas reservas
+- **THEN** exactamente una llama a la pasarela y responde según su resultado, y la otra responde `409` con `code` `PAYMENT_IN_PROGRESS` sin llamar a la pasarela
+
+#### Scenario: Conjuntos que se solapan
+- **WHEN** una solicitud paga las reservas A y B y otra, a la vez, las B y C
+- **THEN** la segunda responde `409` con `code` `PAYMENT_IN_PROGRESS` y la reserva C no queda reclamada
+
+#### Scenario: Nuevo intento tras un rechazo
+- **WHEN** el pago es rechazado y el usuario intenta pagar de nuevo de inmediato con otra tarjeta
+- **THEN** el nuevo intento no recibe `PAYMENT_IN_PROGRESS`
+
+#### Scenario: Nuevo intento tras un timeout
+- **WHEN** la pasarela agota el tiempo límite y el usuario intenta pagar de nuevo antes de `PAYMENT_CLAIM_SECONDS`
+- **THEN** el sistema responde `409` con `code` `PAYMENT_IN_PROGRESS` sin llamar a la pasarela
+
+#### Scenario: Reclamo vencido
+- **WHEN** pasaron más de `PAYMENT_CLAIM_SECONDS` desde un reclamo que nunca se liberó
+- **THEN** el usuario puede pagar de nuevo
+
+#### Scenario: Configuración incoherente
+- **WHEN** `PAYMENT_CLAIM_SECONDS` es menor o igual que el tiempo límite de la pasarela
+- **THEN** el sistema no arranca y reporta la variable inválida
+
+### Requirement: Todo o nada en la compra
+Si alguna de las reservas no se puede pagar, el sistema MUST rechazar la compra completa sin llamar a la pasarela, sin cobrar y sin modificar ninguna reserva ni seat. El sistema MUST NOT emitir tickets parciales.
+
+#### Scenario: Una reserva del grupo vencida
+- **WHEN** una de tres reservas ya venció
+- **THEN** el sistema responde `409` con `code` `RESERVATION_EXPIRED`, no llama a la pasarela y las otras dos siguen `ACTIVE`
+
+#### Scenario: Reservas repetidas
+- **WHEN** `reservationIds` incluye dos veces el mismo id
+- **THEN** el sistema responde `400` con `code` `VALIDATION_ERROR` y no llama a la pasarela
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Comprar una reserva`
+- TO: `### Requirement: Comprar reservas`
+- FROM: `### Requirement: Idempotencia de la compra`
+- TO: `### Requirement: Compra duplicada
+Si alguna de las reservas de la solicitud ya está `CONFIRMED` (ya fue pagada), el sistema MUST responder `409` con `code` `DUPLICATE_PAYMENT` y el mensaje "These reservations were already paid. Check your tickets before paying again", sin llamar a la pasarela, sin crear otro pedido, otro pago ni otros tickets, y sin devolver los tickets existentes. Una solicitud que llega mientras otra del mismo conjunto todavía está cobrando recibe `PAYMENT_IN_PROGRESS`, no este error. Si, aun así, una solicitud cobra y al emitir encuentra reservas ya `CONFIRMED` (el reclamo venció durante un cobro lento), MUST responder `409` con `code` `DUPLICATE_PAYMENT` y, si el cobro tiene un `transactionId` distinto al del pedido existente, registrarlo como un pago `REFUND_PENDING` y dejar un aviso en el registro para conciliación.
+
+#### Scenario: Compra repetida
+- **WHEN** el dueño vuelve a comprar las mismas reservas ya pagadas
+- **THEN** el sistema responde `409` con `code` `DUPLICATE_PAYMENT`, no hay llamadas nuevas a la pasarela y no se crean tickets ni pagos nuevos
+
+#### Scenario: Solicitudes simultáneas
+- **WHEN** varias solicitudes pagan a la vez las mismas reservas
+- **THEN** exactamente una responde `201`, las demás `409` (`PAYMENT_IN_PROGRESS` mientras se cobra, `DUPLICATE_PAYMENT` si llegan cuando ya terminó), y existe un solo pedido, un solo pago y un ticket por reserva
+
+#### Scenario: Reserva ya pagada junto a otras
+- **WHEN** el usuario paga una reserva ya pagada junto con otra vigente
+- **THEN** el sistema responde `409` con `code` `DUPLICATE_PAYMENT`, no llama a la pasarela y la reserva vigente sigue `ACTIVE`
+
+#### Scenario: Doble cobro con reclamo vencido
+- **WHEN** el reclamo venció durante un cobro lento, otra solicitud pagó y terminó, y la primera cobra con un `transactionId` distinto
+- **THEN** el sistema responde `409` con `code` `DUPLICATE_PAYMENT`, registra un pago `REFUND_PENDING` por ese cobro y deja un aviso en el registro
+
+### Requirement: Compra en vuelo
+Tras la aprobación, el sistema SHALL verificar dentro de la misma transacción, con el evento bloqueado contra cancelaciones simultáneas y las reservas bloqueadas en un orden fijo por id, que el evento siga `ACTIVE` y que todas las reservas sigan `ACTIVE`. Si el evento fue cancelado, MUST responder `409` con `code` `EVENT_CANCELLED`; si el dueño canceló alguna reserva, `409` con `code` `RESERVATION_ALREADY_CANCELLED`; si alguna dejó de estar activa por otra causa, `409` con `code` `RESERVATION_EXPIRED`. En todos los casos MUST NOT emitir ningún ticket y MUST registrar el pago aprobado como `REFUND_PENDING`, una sola vez por compra, asociado a un pedido.
+
+#### Scenario: Evento cancelado durante el pago
+- **WHEN** el evento se cancela después de iniciar el pago y la pasarela aprueba
+- **THEN** el sistema responde `409` con `code` `EVENT_CANCELLED`, no hay tickets y existe un único pago `REFUND_PENDING` con el `transactionId` y el monto total
+
+#### Scenario: Reserva liberada durante el pago
+- **WHEN** una de las reservas queda `EXPIRED` mientras se paga y la pasarela aprueba
+- **THEN** el sistema responde `409` con `code` `RESERVATION_EXPIRED`, no hay tickets y existe un pago `REFUND_PENDING` por el monto total
+
+#### Scenario: Reserva cancelada por el usuario durante el pago
+- **WHEN** el dueño cancela una de las reservas mientras se paga y la pasarela aprueba
+- **THEN** el sistema responde `409` con `code` `RESERVATION_ALREADY_CANCELLED`, no hay tickets, existe un pago `REFUND_PENDING` y el seat de la reserva cancelada queda `AVAILABLE`
+
+#### Scenario: Cancelación simultánea a la compra
+- **WHEN** una compra aprobada y la cancelación del evento ocurren a la vez
+- **THEN** el resultado es consistente: o los tickets se emiten y luego quedan `CANCELLED_BY_EVENT` con su pago `REFUND_PENDING`, o no se emite ningún ticket y el pago queda `REFUND_PENDING`
+
+#### Scenario: Sin interbloqueos
+- **WHEN** dos compras con reservas en común se ejecutan a la vez, enviadas en distinto orden
+- **THEN** ambas terminan sin interbloqueo: una se aprueba y la otra recibe `409`
+
+### Requirement: Registro de pagos y tickets
+Una compra aprobada SHALL guardar un pedido, un único pago `APPROVED` con `transactionId` y el monto total, y un ticket `ISSUED` por cada reserva, de forma atómica con el cambio de estado de los seats y las reservas. Cada reserva tiene como máximo un ticket y cada pedido un único pago. Si la emisión falla por un error inesperado después del cobro, el sistema MUST revertir el cambio de estado de los seats y las reservas, responder `500` con `code` `INTERNAL_ERROR`, y dejar el pago registrado como `REFUND_PENDING` (el cobro ya ocurrió) para no perder su rastro.
+
+#### Scenario: Atomicidad del cambio de estado
+- **WHEN** falla la inserción de un ticket después de confirmar las reservas
+- **THEN** todas las reservas siguen `ACTIVE`, los seats `RESERVED` y no existe ningún ticket
+
+#### Scenario: El cobro no se pierde
+- **WHEN** la emisión falla después de que la pasarela aprobó
+- **THEN** existe un pago `REFUND_PENDING` con el `transactionId` y el sistema responde `500` con `code` `INTERNAL_ERROR`

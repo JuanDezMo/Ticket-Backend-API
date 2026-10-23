@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { paginationSchema } from '../../shared/utils/pagination.js';
 import { MAX_CAPACITY } from '../seats/seat.types.js';
-import { EVENT_STATUS_VALUES, EVENT_TYPE_VALUES, MAX_PRICE } from './event.types.js';
+import {
+  EVENT_STATUS_VALUES,
+  EVENT_TYPE_VALUES,
+  MAX_PRICE,
+  MAX_SEATS_PER_USER,
+} from './event.types.js';
 
 const isoDate = z.iso.datetime({ offset: true }).transform((value) => new Date(value));
 
@@ -25,6 +30,17 @@ export function createEventSchema(now: () => Date) {
         .max(MAX_PRICE)
         .refine(hasAtMostTwoDecimals, 'must have at most 2 decimals'),
       capacity: z.number().int().min(1).max(MAX_CAPACITY),
+      // Mensajes distintos: faltante frente a valor inválido (el campo se antepone en `validate`)
+      maxSeatsPerUser: z
+        .number({
+          error: (issue) =>
+            issue.input === undefined
+              ? 'is required'
+              : `must be an integer from 1 to ${MAX_SEATS_PER_USER}`,
+        })
+        .int(`must be an integer from 1 to ${MAX_SEATS_PER_USER}`)
+        .min(1, `must be an integer from 1 to ${MAX_SEATS_PER_USER}`)
+        .max(MAX_SEATS_PER_USER, `must be an integer from 1 to ${MAX_SEATS_PER_USER}`),
       startDate: isoDate,
       endDate: isoDate,
     })
@@ -32,6 +48,13 @@ export function createEventSchema(now: () => Date) {
     .superRefine((event, ctx) => {
       if (event.startDate <= now()) {
         ctx.addIssue({ code: 'custom', path: ['startDate'], message: 'must be in the future' });
+      }
+      if (event.maxSeatsPerUser > event.capacity) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['maxSeatsPerUser'],
+          message: 'must not exceed capacity',
+        });
       }
       if (event.endDate <= event.startDate) {
         ctx.addIssue({ code: 'custom', path: ['endDate'], message: 'must be after startDate' });
